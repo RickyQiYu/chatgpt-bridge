@@ -393,3 +393,22 @@ test('returns rejected when the browser rejects a release before dispatch', asyn
   assert.equal(outcome.reason, 'release_rejected_before_dispatch');
   assert.equal(h.calls.length, 1);
 });
+
+test('retries exact cleanup after any definitive pre-dispatch failure', async () => {
+  const sendOptions = {
+    sendCommandError: Object.assign(new Error('client disconnected before command dispatch'), {
+      code: 'BROWSER_CLIENT_NOT_READY',
+      preDispatchRejected: true,
+    }),
+  };
+  const h = makeHarness(sendOptions);
+
+  const first = await h.coordinator.releaseStaleRequestLease(h.releaseIdentity);
+  sendOptions.sendCommandError = null;
+  const retry = await h.coordinator.releaseStaleRequestLease(h.releaseIdentity);
+
+  assert.equal(first.status, 'rejected');
+  assert.equal(first.reason, 'release_rejected_before_dispatch');
+  assert.equal(retry.status, 'confirmed');
+  assert.equal(h.calls.length, 2);
+});

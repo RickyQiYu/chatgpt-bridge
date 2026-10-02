@@ -12,7 +12,9 @@ import { BrowserTabCoordinator } from './browserTabCoordinator.js';
 import { isRequestRuntimeFinished } from './requestRuntimeProjection.js';
 
 function hasFreshVoiceIdleComposer(client = {}) {
-  if (!['extension'].includes(String(client.runtime || client.transport || '').toLowerCase())) return true;
+  // Hub-connected browser and extension clients can both receive prompt writes,
+  // so every identified runtime must prove the same safe composer state.
+  if (!String(client.runtime || client.transport || '').trim()) return true;
   const observation = client.tabObservation || {};
   const observedAt = Number(observation.observedAt);
   const now = Date.now();

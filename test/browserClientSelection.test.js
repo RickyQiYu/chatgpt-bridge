@@ -108,6 +108,16 @@ test('extension prompt admission requires a fresh stable Voice composer, not Sen
     ...client,
     tabObservation: { ...client.tabObservation, observedAt: Date.now() - 31_000 },
   }), false, 'stale observation');
+
+  const browserClient = { ...client, id: 'browser-websocket-client', runtime: 'browser' };
+  assert.equal(coordinator.isPromptClientIdle(browserClient), true);
+  assert.equal(coordinator.isPromptClientIdle({
+    ...browserClient,
+    tabObservation: {
+      ...browserClient.tabObservation,
+      composer: { ready: true, primaryAction: 'send', hasDraft: true },
+    },
+  }), false, 'browser websocket clients also need Voice-idle composer proof');
 });
 
 test('auto-opened extension prompt waits for a stable Voice-idle observation', async () => {

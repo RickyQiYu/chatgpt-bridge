@@ -32,11 +32,35 @@ function composerDependencies(overrides = {}) {
   };
 }
 
-test('prompt submission preserves text typed after the Voice-idle check and before the first composer write', async () => {
+test('prompt and steer submissions preserve a composer draft entered during setup', async () => {
   const { sandbox } = await bootstrapExtensionContentRuntime();
+  sandbox.setTimeout = globalThis.setTimeout;
+  sandbox.clearTimeout = globalThis.clearTimeout;
+  const mutationObservers = new Set();
+  sandbox.MutationObserver = class {
+    constructor(callback) { this.callback = callback; mutationObservers.add(this); }
+    observe(_target, options = {}) { this.attributeFilter = options.attributeFilter || null; }
+    disconnect() { mutationObservers.delete(this); }
+  };
+  sandbox.window.MutationObserver = sandbox.MutationObserver;
+  const notifyMutation = (attributeName) => {
+    for (const observer of Array.from(mutationObservers)) {
+      if (observer.attributeFilter && !observer.attributeFilter.includes(attributeName)) continue;
+      observer.callback([{ type: 'attributes', attributeName }]);
+    }
+  };
+  sandbox.DataTransfer = class {
+    constructor() { this.value = ''; }
+    setData(_type, value) { this.value = String(value); }
+  };
+  sandbox.ClipboardEvent = class {
+    constructor(type, options = {}) { this.type = type; this.clipboardData = options.clipboardData; }
+  };
+  sandbox.InputEvent = class { constructor(type) { this.type = type; } };
   let action = 'voice';
   let typedDuringWait = false;
   let sendClicks = 0;
+  let turns = [];
   const sendButton = {
     disabled: false,
     isConnected: true,
@@ -45,7 +69,10 @@ test('prompt submission preserves text typed after the Voice-idle check and befo
       if (name === 'aria-label') return 'Send prompt';
       return null;
     },
-    click() { sendClicks += 1; },
+    click() {
+      sendClicks += 1;
+      turns = [{ textContent: composer.value }];
+    },
   };
   const voiceButton = {
     disabled: false,
@@ -56,6 +83,15 @@ test('prompt submission preserves text typed after the Voice-idle check and befo
       return null;
     },
   };
+  const stopButton = {
+    disabled: false,
+    isConnected: true,
+    getAttribute(name) {
+      if (name === 'data-testid') return 'stop-button';
+      if (name === 'aria-label') return 'Stop generating';
+      return null;
+    },
+  };
   const form = {
     nodeType: 1,
     tagName: 'FORM',
@@ -63,13 +99,13 @@ test('prompt submission preserves text typed after the Voice-idle check and befo
     matches() { return false; },
     closest() { return null; },
     querySelectorAll(selector) {
-      if (selector === 'button, [role="button"]') return [action === 'voice' ? voiceButton : sendButton];
-      if (selector.includes('stop') || selector.includes('Stop')) return [];
+      if (selector === 'button, [role="button"]') return [action === 'voice' ? voiceButton : action === 'stop' ? stopButton : sendButton];
+      if (selector.includes('stop') || selector.includes('Stop')) return action === 'stop' ? [stopButton] : [];
       if (selector.includes('send') || selector.includes('Send')) return action === 'send' ? [sendButton] : [];
       if (selector.includes('composer-speech')) return action === 'voice' ? [voiceButton] : [];
       return [];
     },
-    contains(node) { return node === composer || node === sendButton || node === voiceButton; },
+    contains(node) { return node === composer || node === sendButton || node === voiceButton || node === stopButton; },
   };
   const composer = {
     nodeType: 1,
@@ -87,13 +123,19 @@ test('prompt submission preserves text typed after the Voice-idle check and befo
       return null;
     },
     querySelectorAll() { return []; },
-    dispatchEvent() { return true; },
+    dispatchEvent(event) {
+      if (event?.type === 'paste') {
+        this.value = String(event.clipboardData?.value || '');
+        action = 'send';
+      }
+      return true;
+    },
   };
   const main = {
     nodeType: 1,
     tagName: 'MAIN',
     isConnected: true,
-    contains(node) { return node === composer || node === form || node === sendButton || node === voiceButton; },
+    contains(node) { return node === composer || node === form || node === sendButton || node === voiceButton || node === stopButton; },
     querySelectorAll() { return []; },
     closest() { return null; },
     getAttribute() { return null; },
@@ -104,7 +146,11 @@ test('prompt submission preserves text typed after the Voice-idle check and befo
     return [];
   };
   const commands = sandbox.ChatGptComposerCommands.createComposerCommands(composerDependencies({
+    CONFIG: { steerSubmitReadyTimeoutMs: 2_000, steerSubmitAckTimeoutMs: 1_000 },
     DOM_PARSER: sandbox.ChatGptDomParserCore,
+    getTurnNodes: () => turns,
+    turnRole: () => 'user',
+    visibleText: (node) => String(node?.textContent || ''),
     async delay(ms) {
       if (ms === 20 && !typedDuringWait) {
         typedDuringWait = true;
@@ -124,6 +170,62 @@ test('prompt submission preserves text typed after the Voice-idle check and befo
   );
   assert.equal(composer.value, 'my draft');
   assert.equal(sendClicks, 0);
+  assert.throws(
+    () => commands.submitComposer(composer, { requestId: 'steer-before-click' }, {
+      kind: 'steer', attempt: 1, expectedMessage: 'automated steer prompt',
+    }),
+    (error) => error.code === 'PROMPT_COMPOSER_CHANGED_DURING_SUBMISSION',
+  );
+  assert.equal(composer.value, 'my draft');
+  assert.equal(sendClicks, 0);
+
+  await assert.rejects(
+    commands.enterPrompt('automated steer prompt', { requestId: 'steer-composer-race', options: {} }, { kind: 'steer' }),
+    (error) => {
+      assert.ok(['PROMPT_COMPOSER_NOT_IDLE', 'PROMPT_COMPOSER_CHANGED_DURING_SUBMISSION'].includes(error.code));
+      assert.equal(error.provenNotExecuted, true);
+      return true;
+    },
+  );
+  assert.equal(composer.value, 'my draft');
+  assert.equal(sendClicks, 0);
+
+  composer.value = '';
+  action = 'stop';
+  setTimeout(() => {
+    composer.value = 'steer draft typed while waiting';
+    action = 'send';
+  }, 20);
+  let steerSettled = false;
+  const waitingSteer = commands.enterPrompt(
+    'automated steer while busy',
+    { requestId: 'steer-user-draft-race', options: {} },
+    { kind: 'steer' },
+  ).then((value) => ({ value }), (error) => ({ error })).finally(() => { steerSettled = true; });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(steerSettled, false, 'steering should wait while the generation is busy');
+  const steerOutcome = await waitingSteer;
+  assert.equal(steerOutcome.error?.code, 'PROMPT_COMPOSER_NOT_IDLE');
+  assert.equal(composer.value, 'steer draft typed while waiting');
+  assert.equal(sendClicks, 0);
+
+  composer.value = '';
+  action = 'voice';
+  setTimeout(() => { action = 'stop'; notifyMutation('hidden'); }, 20);
+  setTimeout(() => { action = 'voice'; notifyMutation('aria-hidden'); }, 40);
+  const steerStartedAt = Date.now();
+  const pendingSteer = commands.enterPrompt(
+    'steer after generation',
+    { requestId: 'steer-waits-for-idle', options: {} },
+    { kind: 'steer' },
+  );
+  await new Promise((resolve) => setTimeout(resolve, 760));
+  assert.equal(composer.value, '', 'steer text must not be written before Voice is stable');
+  const evidence = await pendingSteer;
+  assert.equal(evidence.confirmed, true);
+  assert.equal(composer.value, 'steer after generation');
+  assert.equal(sendClicks, 1);
+  assert.ok(Date.now() - steerStartedAt >= 780, 'steering waits 750ms after Voice returns');
 });
 
 test('composer steering refuses to synthesize Enter while ChatGPT exposes only the stop control', async () => {

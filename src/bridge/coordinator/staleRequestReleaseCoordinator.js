@@ -207,7 +207,7 @@ export class StaleRequestReleaseCoordinator {
       }
       return { status: 'ambiguous', reason: 'release_unconfirmed' };
     } catch (error) {
-      if (error?.preDispatchRejected === true && error?.code === 'BROWSER_TAB_QUARANTINED') {
+      if (error?.preDispatchRejected === true) {
         this.releaseAttempts.delete(releaseKey);
         return rejected('release_rejected_before_dispatch');
       }

@@ -26,6 +26,16 @@
       visibleText,
       waitForChatPageReady,
     } = deps;
+    const steerComposerReadiness = globalThis.ChatGptSteerComposerReadiness?.createSteerComposerReadiness({
+      composerSubmissionText,
+      composerTextValue,
+      diagnostic,
+      findChatMain,
+      findComposer,
+      findComposerRootStrict,
+      hasComposerDraft,
+      readPrimaryComposerAction,
+    });
 
 function promptSubmissionEvidence(request, baselineTurnKeys, message, composerBefore, options = {}) {
   const requireUserTurn = options.requireUserTurn === true;
@@ -299,6 +309,13 @@ async function waitForPromptSendButton(request, timeoutMs = 2_000) {
   return null;
 }
 
+function waitForSteerComposerVoiceIdle(request) {
+  if (!steerComposerReadiness?.waitForVoiceIdle) {
+    throw new Error('Steering composer readiness module was not loaded before composerCommands.js');
+  }
+  return steerComposerReadiness.waitForVoiceIdle(request, resolveSteerSubmitReadyTimeoutMs(request));
+}
+
 async function enterPrompt(message, request, options = {}) {
   const kind = String(options.kind || 'prompt');
   const ackTimeoutMs = resolveSubmissionAckTimeoutMs(request, kind);
@@ -315,26 +332,39 @@ async function enterPrompt(message, request, options = {}) {
   }
 
   await waitForChatPageReady(request, { stage: `${kind}.submit`, settleMs: 350 });
-  const composer = await waitForComposer(request);
-  const composerBeforeText = composerTextValue(composer);
+  let composer = await waitForComposer(request);
+  let composerBeforeText = composerTextValue(composer);
   if (!findChatMain()) {
     throw new Error('DOM_SCHEMA_CHANGED: Chat conversation root is missing. Refusing to submit without a scoped DOM observation root.');
   }
-  if (kind !== 'steer'
-      && (readPrimaryComposerAction() !== 'voice'
-        || hasComposerDraft()
-        || composerSubmissionText(composerBeforeText))) {
+  if (hasComposerDraft() || composerSubmissionText(composerBeforeText)) {
+    const error = new Error('PROMPT_COMPOSER_NOT_IDLE: preserving the existing composer draft');
+    error.code = 'PROMPT_COMPOSER_NOT_IDLE';
+    error.provenNotExecuted = true;
+    throw error;
+  }
+  if (kind === 'steer') {
+    await waitForSteerComposerVoiceIdle(request);
+    composer = await waitForComposer(request);
+    composerBeforeText = composerTextValue(composer);
+  }
+  if (readPrimaryComposerAction() !== 'voice'
+      || hasComposerDraft()
+      || composerSubmissionText(composerBeforeText)) {
     const error = new Error('PROMPT_COMPOSER_NOT_IDLE: preserving the existing composer draft');
     error.code = 'PROMPT_COMPOSER_NOT_IDLE';
     error.provenNotExecuted = true;
     throw error;
   }
   let preparedSubmitButton = null;
+  let composerWriteCompleted = false;
   if (message.trim()) {
-    preparedSubmitButton = (await focusAndSetComposerText(composer, message, request, {
+    const prepared = await focusAndSetComposerText(composer, message, request, {
       requireSendReady: kind !== 'steer',
       expectedCurrentText: composerBeforeText,
-    }))?.button || null;
+    });
+    preparedSubmitButton = prepared?.button || null;
+    composerWriteCompleted = true;
     diagnostic('composer.filled', { requestId: request.requestId, kind, length: message.length });
   } else {
     composer.focus();
@@ -369,13 +399,16 @@ async function enterPrompt(message, request, options = {}) {
     }
   } catch (error) {
     evidenceWaiter?.cancel?.();
-    if (kind === 'steer' && error?.provenNotExecuted === true) {
-      try { restoreComposerText(composer, composerBeforeText); } catch {}
-      diagnostic('steer.submit.rolled_back', {
-        requestId: request?.requestId || '',
-        code: String(error?.code || ''),
-        restoredLength: composerBeforeText.length,
-      });
+    if (kind === 'steer' && error?.provenNotExecuted === true && composerWriteCompleted) {
+      const liveComposer = findComposer() || composer;
+      if (composerSubmissionText(composerTextValue(liveComposer)) === composerSubmissionText(message)) {
+        try { restoreComposerText(liveComposer, composerBeforeText); } catch {}
+        diagnostic('steer.submit.rolled_back', {
+          requestId: request?.requestId || '',
+          code: String(error?.code || ''),
+          restoredLength: composerBeforeText.length,
+        });
+      }
     }
     throw error;
   }
@@ -415,16 +448,23 @@ function submitComposer(composer, request, options = {}) {
   const kind = String(options.kind || 'prompt');
   const attempt = Number(options.attempt || 1);
   const composerRoot = findComposerRootStrict();
+  const expected = composerSubmissionText(options.expectedMessage);
+  const actual = composerSubmissionText(composerTextValue(composer));
+  if (expected && actual !== expected) throw composerOwnershipError();
   if (kind !== 'steer') {
-    const expected = composerSubmissionText(options.expectedMessage);
-    const actual = composerSubmissionText(composerTextValue(composer));
-    if (expected && actual !== expected) throw composerOwnershipError();
     if (readPrimaryComposerAction([composerRoot].filter(Boolean)) !== 'send') {
       const error = new Error('PROMPT_COMPOSER_NOT_READY: ChatGPT did not expose the pending prompt as the Send action');
       error.code = 'PROMPT_COMPOSER_NOT_READY';
       error.provenNotExecuted = true;
       throw error;
     }
+  } else if (expected && readPrimaryComposerAction([composerRoot].filter(Boolean)) !== 'send') {
+    const error = new Error('STEER_SUBMIT_NOT_READY: ChatGPT did not expose the pending steer text as the Send action');
+    error.code = 'STEER_SUBMIT_NOT_READY';
+    error.retryable = true;
+    error.provenNotExecuted = true;
+    error.cancellationEvidence = { source: 'composer', reason: 'steer_send_control_missing' };
+    throw error;
   }
   const button = findSendButton([composerRoot].filter(Boolean)) || options.button;
   if (button) {
@@ -1064,6 +1104,7 @@ function isUsableButton(element) {
       resolveSubmissionAckTimeoutMs,
       resolveSteerSubmitReadyTimeoutMs,
       waitForSteerSubmitButton,
+      waitForSteerComposerVoiceIdle,
       waitForPromptSendButton,
       submitComposer,
       findComposer,

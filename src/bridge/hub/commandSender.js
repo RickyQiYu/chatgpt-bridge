@@ -3,6 +3,13 @@ import { randomUUID } from 'node:crypto';
 import { EXTENSION_PROTOCOL_VERSION } from '../protocol/v5.js';
 import { isClientCompatible } from './connectionPolicy.js';
 
+function preDispatchError(error, code = '') {
+  const result = error instanceof Error ? error : new Error(String(error || 'Browser command was rejected before dispatch'));
+  result.preDispatchRejected = true;
+  if (!result.code && code) result.code = code;
+  return result;
+}
+
 function normalizeRequestIdentity(request = null) {
   if (!request || typeof request !== 'object') return null;
   const requestId = String(request.requestId || '').trim();
@@ -72,17 +79,22 @@ export class HubCommandSender {
 
   send(clientId, payload, options = {}) {
     const client = this.clients.get(clientId);
-    if (!client) throw new Error(`Browser extension client not found: ${clientId}`);
+    if (!client) throw preDispatchError(new Error(`Browser extension client not found: ${clientId}`), 'BROWSER_CLIENT_NOT_FOUND');
     const reloadControl = options.allowIncompatibleReload === true
       && payload?.type === 'extension.reload'
       && Number(client.extensionProtocolVersion) === EXTENSION_PROTOCOL_VERSION;
     if (!isClientCompatible(client) && !reloadControl) {
-      throw new Error(`Browser extension client is incompatible: ${client.compatibility?.message || clientId}`);
+      throw preDispatchError(new Error(`Browser extension client is incompatible: ${client.compatibility?.message || clientId}`), 'BROWSER_CLIENT_INCOMPATIBLE');
     }
-    if (client.ws?.readyState !== 1) throw new Error(`Browser extension WebSocket client is not open: ${clientId}`);
+    if (client.ws?.readyState !== 1) {
+      throw preDispatchError(new Error(`Browser extension WebSocket client is not open: ${clientId}`), 'BROWSER_CLIENT_NOT_READY');
+    }
 
     const commandId = String(payload?.commandId || randomUUID());
-    const request = normalizeRequestIdentity(options.request || null);
+    let request;
+    try { request = normalizeRequestIdentity(options.request || null); } catch (error) {
+      throw preDispatchError(error, 'BROWSER_REQUEST_IDENTITY_MISSING');
+    }
     const commandType = String(payload?.type || '');
     const validation = globalThis.ChatGptBridgeCommandManifest?.validateCommandPayload?.(commandType, payload, {
       requestScoped: Boolean(request),
@@ -90,7 +102,7 @@ export class HubCommandSender {
     if (!validation?.valid) {
       const error = new Error(validation?.errors?.join('; ') || `Unsupported browser command type: ${commandType || 'missing'}`);
       error.code = 'BROWSER_COMMAND_INVALID';
-      throw error;
+      throw preDispatchError(error, 'BROWSER_COMMAND_INVALID');
     }
     const definition = validation.definition;
     const commandPayload = {
@@ -106,18 +118,27 @@ export class HubCommandSender {
         ? payload.preconditions
         : inferredCommandPreconditions(commandType, payload, commandId),
     };
-    const envelope = this.protocol.command(commandPayload, {
-      source: {
-        clientId: 'bridge-server',
-        tabId: client.browserTabId,
-        backgroundEpoch: this.serverInstanceId,
-        contentEpoch: '',
-        sequence: this.nextSequence(),
-      },
-      request,
-      commandId,
-    });
-    client.ws.send(JSON.stringify(envelope));
+    let envelope;
+    let serializedEnvelope;
+    try {
+      envelope = this.protocol.command(commandPayload, {
+        source: {
+          clientId: 'bridge-server',
+          tabId: client.browserTabId,
+          backgroundEpoch: this.serverInstanceId,
+          contentEpoch: '',
+          sequence: this.nextSequence(),
+        },
+        request,
+        commandId,
+      });
+      serializedEnvelope = JSON.stringify(envelope);
+    } catch (error) {
+      throw preDispatchError(error, 'BROWSER_COMMAND_PREPARATION_FAILED');
+    }
+    try { client.ws.send(serializedEnvelope); } catch (error) {
+      throw preDispatchError(error, 'BROWSER_COMMAND_SEND_REJECTED');
+    }
     this.recordDebug(clientId, {
       type: 'server.command_delivered',
       commandType: commandPayload.type || 'unknown',

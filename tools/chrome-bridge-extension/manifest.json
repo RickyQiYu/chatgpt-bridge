@@ -82,6 +82,7 @@
         "content/turnUiSignals.js",
         "content/currentTurnDom.js",
         "content/turnSnapshots.js",
+        "content/steerComposerReadiness.js",
         "content/composerCommands.js",
         "content/attachmentCommands.js",
         "content/sessionCommands.js",
