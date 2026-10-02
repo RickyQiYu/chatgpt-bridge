@@ -99,8 +99,20 @@ test('main-world artifact bridge leaves Blob URLs, clicks, and window.open untou
   assert.equal(context.window.__chatgptBridgeArtifactCaptureMainV1.hooksInstalled(), false);
 });
 
-test('page-main composer setter refuses to replace text entered after the caller observed an empty composer', async () => {
+test('MAIN-world composer protocol matches the content sender and preserves a newly entered draft', async () => {
   const harness = await loadHarness();
+  const isolatedSource = await fs.readFile(path.resolve('tools/chrome-bridge-extension/content/composerCommands.js'), 'utf8');
+  const mainSource = await fs.readFile(path.resolve('tools/chrome-bridge-extension/artifactCaptureMain.js'), 'utf8');
+  const contentSource = isolatedSource.match(/source:\s*'([^']+composer-content-v1)'/)?.[1] || '';
+  const expectedReplySource = isolatedSource.match(/event\.data\?\.source !== '([^']+composer-main-v1)'/)?.[1] || '';
+  const composerBootstrap = mainSource.indexOf("const INSTANCE_KEY = '__chatgptBridgeComposerMainV1'");
+  assert.ok(contentSource, 'content setter protocol source must be explicit');
+  assert.ok(expectedReplySource, 'content setter reply protocol source must be explicit');
+  assert.notEqual(composerBootstrap, -1, 'MAIN-world composer listener must be present in the packaged bootstrap');
+  const composerMainSource = mainSource.slice(composerBootstrap);
+  assert.ok(composerMainSource.includes(`const CONTENT_SOURCE = '${contentSource}'`));
+  assert.ok(composerMainSource.includes(`const MAIN_SOURCE = '${expectedReplySource}'`));
+
   const composer = {
     tagName: 'TEXTAREA',
     value: 'my draft',
@@ -115,7 +127,7 @@ test('page-main composer setter refuses to replace text entered after the caller
   harness.window.getComputedStyle = () => ({ display: 'block', visibility: 'visible', opacity: '1' });
 
   harness.window.postMessage({
-    source: 'chatgpt-browser-bridge-composer-content-v1',
+    source: contentSource,
     type: 'composer.set',
     requestId: 'composer-race',
     expectedCurrentText: '',
@@ -123,7 +135,7 @@ test('page-main composer setter refuses to replace text entered after the caller
   });
 
   assert.equal(composer.value, 'my draft');
-  const result = harness.messages.find((message) => message.type === 'composer.set.result');
+  const result = harness.messages.find((message) => message.source === expectedReplySource && message.type === 'composer.set.result');
   assert.equal(result?.result?.ok, false, JSON.stringify(harness.messages));
   assert.equal(result?.result?.error, 'composer_changed_before_write');
 });
