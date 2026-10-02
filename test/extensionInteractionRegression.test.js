@@ -32,6 +32,100 @@ function composerDependencies(overrides = {}) {
   };
 }
 
+test('prompt submission preserves text typed after the Voice-idle check and before the first composer write', async () => {
+  const { sandbox } = await bootstrapExtensionContentRuntime();
+  let action = 'voice';
+  let typedDuringWait = false;
+  let sendClicks = 0;
+  const sendButton = {
+    disabled: false,
+    isConnected: true,
+    getAttribute(name) {
+      if (name === 'data-testid') return 'send-button';
+      if (name === 'aria-label') return 'Send prompt';
+      return null;
+    },
+    click() { sendClicks += 1; },
+  };
+  const voiceButton = {
+    disabled: false,
+    isConnected: true,
+    getAttribute(name) {
+      if (name === 'data-testid') return 'composer-speech-button';
+      if (name === 'aria-label') return 'Start voice mode';
+      return null;
+    },
+  };
+  const form = {
+    nodeType: 1,
+    tagName: 'FORM',
+    isConnected: true,
+    matches() { return false; },
+    closest() { return null; },
+    querySelectorAll(selector) {
+      if (selector === 'button, [role="button"]') return [action === 'voice' ? voiceButton : sendButton];
+      if (selector.includes('stop') || selector.includes('Stop')) return [];
+      if (selector.includes('send') || selector.includes('Send')) return action === 'send' ? [sendButton] : [];
+      if (selector.includes('composer-speech')) return action === 'voice' ? [voiceButton] : [];
+      return [];
+    },
+    contains(node) { return node === composer || node === sendButton || node === voiceButton; },
+  };
+  const composer = {
+    nodeType: 1,
+    tagName: 'TEXTAREA',
+    value: '',
+    disabled: false,
+    readOnly: false,
+    isConnected: true,
+    parentElement: form,
+    focus() {},
+    getAttribute(name) { return name === 'id' ? 'prompt-textarea' : null; },
+    closest(selector) {
+      if (selector === 'form') return form;
+      if (selector.includes('main')) return main;
+      return null;
+    },
+    querySelectorAll() { return []; },
+    dispatchEvent() { return true; },
+  };
+  const main = {
+    nodeType: 1,
+    tagName: 'MAIN',
+    isConnected: true,
+    contains(node) { return node === composer || node === form || node === sendButton || node === voiceButton; },
+    querySelectorAll() { return []; },
+    closest() { return null; },
+    getAttribute() { return null; },
+  };
+  sandbox.document.querySelectorAll = (selector) => {
+    if (selector.includes('textarea') && selector.includes('prompt-textarea')) return [composer];
+    if (selector === 'main, [role="main"]') return [main];
+    return [];
+  };
+  const commands = sandbox.ChatGptComposerCommands.createComposerCommands(composerDependencies({
+    DOM_PARSER: sandbox.ChatGptDomParserCore,
+    async delay(ms) {
+      if (ms === 20 && !typedDuringWait) {
+        typedDuringWait = true;
+        composer.value = 'my draft';
+        action = 'send';
+      }
+    },
+  }));
+
+  await assert.rejects(
+    commands.enterPrompt('automated prompt', { requestId: 'composer-race', options: {} }, { kind: 'prompt' }),
+    (error) => {
+      assert.equal(error.code, 'PROMPT_COMPOSER_CHANGED_DURING_SUBMISSION');
+      assert.equal(error.provenNotExecuted, true);
+      return true;
+    },
+  );
+  assert.equal(composer.value, 'my draft');
+  assert.equal(sendClicks, 0);
+});
+
 test('composer steering refuses to synthesize Enter while ChatGPT exposes only the stop control', async () => {
   const { sandbox } = await bootstrapExtensionContentRuntime();
   let submitCount = 0;
@@ -388,6 +482,11 @@ test('prompt submission evidence is armed before click and resolves from a DOM m
       mutationCallback([{ type: 'childList' }]);
     },
   };
+  const voiceButton = {
+    disabled: false,
+    isConnected: true,
+    getAttribute(name) { return name === 'aria-label' ? 'Start voice mode' : null; },
+  };
   const form = {
     nodeType: 1,
     tagName: 'FORM',
@@ -395,10 +494,12 @@ test('prompt submission evidence is armed before click and resolves from a DOM m
     matches() { return false; },
     closest() { return null; },
     querySelectorAll(selector) {
-      if (selector.includes('send') || selector.includes('Send') || selector === 'button, [role="button"]') return [sendButton];
+      if (selector === 'button, [role="button"]') return [composer.value ? sendButton : voiceButton];
+      if (selector.includes('send') || selector.includes('Send')) return composer.value ? [sendButton] : [];
+      if (selector.includes('voice') || selector.includes('speech')) return composer.value ? [] : [voiceButton];
       return [];
     },
-    contains(node) { return node === composer || node === sendButton; },
+    contains(node) { return node === composer || node === sendButton || node === voiceButton; },
     getAttribute() { return null; },
   };
   const composer = {
@@ -518,6 +619,11 @@ test('a proven unsubmitted passive prompt is rolled back instead of poisoning th
     getAttribute(name) { return name === 'data-testid' ? 'send-button' : null; },
     click() {},
   };
+  const voiceButton = {
+    disabled: false,
+    isConnected: true,
+    getAttribute(name) { return name === 'aria-label' ? 'Start voice mode' : null; },
+  };
   const form = {
     nodeType: 1,
     tagName: 'FORM',
@@ -525,10 +631,12 @@ test('a proven unsubmitted passive prompt is rolled back instead of poisoning th
     matches() { return false; },
     closest() { return null; },
     querySelectorAll(selector) {
-      if (selector.includes('send') || selector.includes('Send') || selector === 'button, [role="button"]') return [sendButton];
+      if (selector === 'button, [role="button"]') return [composer.value ? sendButton : voiceButton];
+      if (selector.includes('send') || selector.includes('Send')) return composer.value ? [sendButton] : [];
+      if (selector.includes('voice') || selector.includes('speech')) return composer.value ? [] : [voiceButton];
       return [];
     },
-    contains(node) { return node === composer || node === sendButton; },
+    contains(node) { return node === composer || node === sendButton || node === voiceButton; },
     getAttribute() { return null; },
   };
   const composer = {
@@ -572,7 +680,6 @@ test('a proven unsubmitted passive prompt is rolled back instead of poisoning th
     diagnostic(name, data) { diagnostics.push({ name, data }); },
     async delay() {},
   }));
-
   await assert.rejects(
     commands.enterPrompt('stale passive workflow prompt', { requestId: 'passive-stale', options: {} }, { kind: 'passive' }),
     (error) => {

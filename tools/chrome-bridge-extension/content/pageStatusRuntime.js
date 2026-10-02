@@ -125,12 +125,21 @@
 
     function pagePresence() {
       const readiness = chatPageReadiness();
+      let primaryComposerAction = 'unknown';
+      let composerHasDraft = true;
+      try {
+        const value = String(globalThis.ChatGptComposerCommands?.readPrimaryComposerAction?.() || 'unknown');
+        if (['stop', 'send', 'voice'].includes(value)) primaryComposerAction = value;
+      } catch {}
+      try { composerHasDraft = globalThis.ChatGptComposerCommands?.hasComposerDraft?.() !== false; } catch {}
       return {
         visibilityState: document.visibilityState || '',
         focused: typeof document.hasFocus === 'function' ? document.hasFocus() : false,
         documentReadyState: document.readyState || '',
         chatMainReady: readiness.chatMainReady,
         composerReady: readiness.composerReady,
+        primaryComposerAction,
+        composerHasDraft,
         pageReady: readiness.ready,
       };
     }

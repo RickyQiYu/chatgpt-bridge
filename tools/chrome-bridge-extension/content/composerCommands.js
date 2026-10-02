@@ -2,6 +2,8 @@
 // Loaded as a classic MV3 content script before content.js.
 (() => {
   'use strict';
+  let livePrimaryComposerActionReader = () => 'unknown';
+  let liveComposerDraftReader = () => true;
 
   function createComposerCommands(deps = {}) {
     const {
@@ -135,6 +137,17 @@ function resolveSteerSubmitReadyTimeoutMs(request) {
 function composerTextValue(element) {
   if (!element) return '';
   return String(element.value ?? element.innerText ?? element.textContent ?? '');
+}
+
+function composerSubmissionText(value = '') {
+  return String(value || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function composerOwnershipError() {
+  const error = new Error('PROMPT_COMPOSER_CHANGED_DURING_SUBMISSION: preserving text that no longer matches the pending prompt');
+  error.code = 'PROMPT_COMPOSER_CHANGED_DURING_SUBMISSION';
+  error.provenNotExecuted = true;
+  return error;
 }
 
 function restoreComposerText(element, value = '') {
@@ -307,9 +320,21 @@ async function enterPrompt(message, request, options = {}) {
   if (!findChatMain()) {
     throw new Error('DOM_SCHEMA_CHANGED: Chat conversation root is missing. Refusing to submit without a scoped DOM observation root.');
   }
+  if (kind !== 'steer'
+      && (readPrimaryComposerAction() !== 'voice'
+        || hasComposerDraft()
+        || composerSubmissionText(composerBeforeText))) {
+    const error = new Error('PROMPT_COMPOSER_NOT_IDLE: preserving the existing composer draft');
+    error.code = 'PROMPT_COMPOSER_NOT_IDLE';
+    error.provenNotExecuted = true;
+    throw error;
+  }
   let preparedSubmitButton = null;
   if (message.trim()) {
-    preparedSubmitButton = (await focusAndSetComposerText(composer, message, request, { requireSendReady: kind !== 'steer' }))?.button || null;
+    preparedSubmitButton = (await focusAndSetComposerText(composer, message, request, {
+      requireSendReady: kind !== 'steer',
+      expectedCurrentText: composerBeforeText,
+    }))?.button || null;
     diagnostic('composer.filled', { requestId: request.requestId, kind, length: message.length });
   } else {
     composer.focus();
@@ -322,7 +347,7 @@ async function enterPrompt(message, request, options = {}) {
     if (kind === 'steer') {
       const ready = await waitForSteerSubmitButton(request);
       evidenceWaiter = createPromptSubmissionEvidenceWaiter(request, baselineTurnKeys, message, composer, ackTimeoutMs, evidenceOptions);
-      method = submitComposer(composer, request, { kind, attempt: 1, button: ready.button });
+      method = submitComposer(composer, request, { kind, attempt: 1, button: ready.button, expectedMessage: message });
     } else {
       evidenceWaiter = createPromptSubmissionEvidenceWaiter(request, baselineTurnKeys, message, composer, ackTimeoutMs, evidenceOptions);
       // ChatGPT's current ProseMirror composer updates its submit control
@@ -338,6 +363,7 @@ async function enterPrompt(message, request, options = {}) {
         kind,
         attempt: 1,
         button: readyButton || undefined,
+        expectedMessage: message,
         onSubmissionBoundary: options.onSubmissionBoundary,
       });
     }
@@ -389,7 +415,18 @@ function submitComposer(composer, request, options = {}) {
   const kind = String(options.kind || 'prompt');
   const attempt = Number(options.attempt || 1);
   const composerRoot = findComposerRootStrict();
-  const button = options.button || findSendButton([composerRoot].filter(Boolean));
+  if (kind !== 'steer') {
+    const expected = composerSubmissionText(options.expectedMessage);
+    const actual = composerSubmissionText(composerTextValue(composer));
+    if (expected && actual !== expected) throw composerOwnershipError();
+    if (readPrimaryComposerAction([composerRoot].filter(Boolean)) !== 'send') {
+      const error = new Error('PROMPT_COMPOSER_NOT_READY: ChatGPT did not expose the pending prompt as the Send action');
+      error.code = 'PROMPT_COMPOSER_NOT_READY';
+      error.provenNotExecuted = true;
+      throw error;
+    }
+  }
+  const button = findSendButton([composerRoot].filter(Boolean)) || options.button;
   if (button) {
     diagnostic('send_button.found', { requestId: request.requestId, kind, attempt, label: button.getAttribute('aria-label') || button.getAttribute('title') || button.getAttribute('data-testid') || '' });
     options.onSubmissionBoundary?.();
@@ -490,11 +527,19 @@ function findComposer() {
 }
 
 async function focusAndSetComposerText(element, text, request, options = {}) {
+  const originalText = composerSubmissionText(options.expectedCurrentText ?? composerTextValue(element));
+  const expectedText = composerSubmissionText(text);
+  const assertComposerStillOwned = () => {
+    const actualText = composerSubmissionText(composerTextValue(element));
+    if (actualText !== originalText && actualText !== expectedText) throw composerOwnershipError();
+  };
+
   element.focus();
   await delay(20);
+  assertComposerStillOwned();
 
   const attempts = [
-    { name: 'page_main', apply: () => setComposerTextByPageMain(element, text, request) },
+    { name: 'page_main', apply: () => setComposerTextByPageMain(element, text, request, { expectedCurrentText: composerTextValue(element) }) },
     { name: 'paste', apply: () => setComposerTextByPaste(element, text) },
     { name: 'exec_command', apply: () => setComposerTextByExecCommand(element, text) },
     { name: 'text_content', apply: () => setComposerTextByTextContent(element, text) },
@@ -503,8 +548,10 @@ async function focusAndSetComposerText(element, text, request, options = {}) {
 
   for (let i = 0; i < attempts.length; i += 1) {
     const attempt = attempts[i];
+    assertComposerStillOwned();
     let result;
     try { result = await attempt.apply(); } catch (error) {
+      if (error?.code === 'PROMPT_COMPOSER_CHANGED_DURING_SUBMISSION') throw error;
       diagnostic('composer.text_method_failed', {
         requestId: request.requestId,
         method: attempt.name,
@@ -513,6 +560,7 @@ async function focusAndSetComposerText(element, text, request, options = {}) {
       continue;
     }
     if (result && result.ok === false) {
+      if (String(result.error || '') === 'composer_changed_before_write') throw composerOwnershipError();
       diagnostic('composer.text_method_failed', {
         requestId: request.requestId,
         method: attempt.name,
@@ -521,8 +569,10 @@ async function focusAndSetComposerText(element, text, request, options = {}) {
       continue;
     }
     await delay(80);
+    assertComposerStillOwned();
     if (composerContainsText(element, text)) {
       const button = await waitForPromptSendButton(request, options.requireSendReady === false ? 250 : 900);
+      assertComposerStillOwned();
       if (button || options.requireSendReady === false) {
         diagnostic('composer.text_verified', {
           requestId: request.requestId, method: attempt.name, length: text.length, sendReady: Boolean(button),
@@ -532,6 +582,13 @@ async function focusAndSetComposerText(element, text, request, options = {}) {
       diagnostic('composer.text_not_submit_ready', {
         requestId: request.requestId, method: attempt.name, length: text.length, sendReady: false,
       });
+      if (options.requireSendReady !== false && readPrimaryComposerAction() !== 'send') {
+        const error = new Error('PROMPT_SUBMIT_NOT_READY: preserving text because ChatGPT still shows Voice instead of Send');
+        error.code = 'PROMPT_SUBMIT_NOT_READY';
+        error.provenNotExecuted = true;
+        throw error;
+      }
+      assertComposerStillOwned();
       clearComposerElement(element);
     }
   }
@@ -594,7 +651,7 @@ function setComposerTextByExecCommand(element, text) {
   element.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
 }
 
-function setComposerTextByPageMain(element, text, request) {
+function setComposerTextByPageMain(element, text, request, options = {}) {
   if (!element || !(element.isContentEditable || element.getAttribute?.('contenteditable'))) return { ok: false, error: 'not_contenteditable' };
   const requestId = `composer-main-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   return new Promise((resolve) => {
@@ -607,12 +664,19 @@ function setComposerTextByPageMain(element, text, request) {
       resolve(result && typeof result === 'object' ? result : { ok: false, error: 'invalid_main_world_result' });
     };
     const onMessage = (event) => {
-      if (event.source !== window || event.data?.source !== 'chatgpt-bridge-composer-main-v1' || event.data?.type !== 'composer.set.result' || String(event.data.requestId || '') !== requestId) return;
+      if (event.source !== window || event.data?.source !== 'chatgpt-browser-bridge-composer-main-v1' || event.data?.type !== 'composer.set.result' || String(event.data.requestId || '') !== requestId) return;
       finish(event.data.result);
     };
     const timer = setTimeout(() => finish({ ok: false, error: 'main_world_composer_timeout' }), 1_200);
     window.addEventListener('message', onMessage);
-    window.postMessage({ source: 'chatgpt-bridge-composer-content-v1', type: 'composer.set', requestId, text: String(text || ''), diagnosticRequestId: request?.requestId || '' }, '*');
+    window.postMessage({
+      source: 'chatgpt-browser-bridge-composer-content-v1',
+      type: 'composer.set',
+      requestId,
+      text: String(text || ''),
+      expectedCurrentText: String(options.expectedCurrentText || ''),
+      diagnosticRequestId: request?.requestId || '',
+    }, '*');
   });
 }
 
@@ -801,6 +865,31 @@ function findSendButton(roots = [document]) {
   }) || null;
 }
 
+function readPrimaryComposerAction(roots = [findComposerRootStrict()].filter(Boolean)) {
+  const surfaces = Array.isArray(roots) ? roots.filter(Boolean) : [roots].filter(Boolean);
+  if (!surfaces.length) return 'unknown';
+  if (findStopButton(surfaces)) return 'stop';
+
+  const voicePattern = /voice|microphone|\bmic\b|speech|dictat|голос|микрофон|音声|マイク/i;
+  const sendPattern = /send[-_ ]?(button|message|prompt)?|submit|arrow-up|paper-airplane|отправ|послать|发送|送信/i;
+  const buttons = scopedQueryAll(surfaces, 'button, [role="button"]')
+    .filter((element) => isPrimaryChatSurfaceElement(element) && isUsableButton(element));
+  const signals = buttons.map((element) => buttonSignalText(element));
+  if (signals.some((signal) => sendPattern.test(signal) && !voicePattern.test(signal))) return 'send';
+  if (signals.some((signal) => voicePattern.test(signal))) return 'voice';
+  return 'unknown';
+}
+
+function hasComposerDraft() {
+  try {
+    const composer = findComposer();
+    if (!composer) return true;
+    return Boolean(composerSubmissionText(composerTextValue(composer)));
+  } catch {
+    return true;
+  }
+}
+
 function findRegenerateButton(roots = [document]) {
   return findButtonBySignal(roots, /regenerate|retry|try again|rerun|repeat|повтор|сгенерировать снова|заново|もう一度/i, [
     '[data-testid*="regenerate" i]',
@@ -965,6 +1054,8 @@ function isUsableButton(element) {
 }
 
 
+    livePrimaryComposerActionReader = readPrimaryComposerAction;
+    liveComposerDraftReader = hasComposerDraft;
     return Object.freeze({
       enterPrompt,
       promptSubmissionEvidence,
@@ -983,6 +1074,8 @@ function isUsableButton(element) {
       finalizationControlRoots,
       findStopButton,
       findSendButton,
+      readPrimaryComposerAction,
+      hasComposerDraft,
       findContinueButton,
       readFinalizationSignals,
       shouldDeferFinalizationForSteer,
@@ -991,5 +1084,10 @@ function isUsableButton(element) {
     });
   }
 
-  globalThis.ChatGptComposerCommands = Object.freeze({ createComposerCommands });
+  // Sibling classic scripts use this explicit probe for tab readiness and release checks.
+  globalThis.ChatGptComposerCommands = Object.freeze({
+    createComposerCommands,
+    readPrimaryComposerAction: () => livePrimaryComposerActionReader(),
+    hasComposerDraft: () => liveComposerDraftReader(),
+  });
 })();

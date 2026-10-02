@@ -209,6 +209,10 @@ test('proved pre-submit session effect resumes the remaining prompt pipeline aft
   };
   context.globalThis = context;
   vm.createContext(context);
+  context.ChatGptComposerCommands = {
+    readPrimaryComposerAction: () => 'voice',
+    hasComposerDraft: () => false,
+  };
   for (const source of sources) vm.runInContext(source, context);
 
   const sent = [];

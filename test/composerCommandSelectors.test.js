@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import vm from 'node:vm';
+import { parseCapturedHtml } from './helpers/offlineChatDom.js';
 
 async function loadComposerCommands() {
   const source = await fs.readFile(
@@ -29,7 +30,7 @@ function button(attributes = {}) {
   };
 }
 
-function rootFor({ stop = null, send = null } = {}) {
+function rootFor({ stop = null, send = null, voice = null } = {}) {
   return {
     matches() { return false; },
     querySelectorAll(selector) {
@@ -39,7 +40,7 @@ function rootFor({ stop = null, send = null } = {}) {
       if (selector === '[data-testid*="send" i]') return send ? [send] : [];
       if (selector === 'button[aria-label*="Send" i]') return [];
       if (selector === '[role="button"][aria-label*="Send" i]') return [];
-      if (selector === 'button, [role="button"]') return [stop, send].filter(Boolean);
+      if (selector === 'button, [role="button"]') return [stop, send, voice].filter(Boolean);
       return [];
     },
   };
@@ -70,4 +71,27 @@ test('steering still selects the real send control when it becomes available', a
   });
 
   assert.equal(commands.findSendButton([rootFor({ stop, send })]), send);
+});
+
+test('primary composer action distinguishes Stop, Send draft, Voice idle, and unknown', async () => {
+  const commands = await loadComposerCommands();
+  const html = await fs.readFile(path.resolve('test/fixtures/chat-dom/composer-primary-actions.html'), 'utf8');
+  const cases = parseCapturedHtml(html).querySelectorAll('[data-case]');
+  const stop = cases.find((item) => item.getAttribute('data-case') === 'stop');
+  const send = cases.find((item) => item.getAttribute('data-case') === 'send');
+  const voice = cases.find((item) => item.getAttribute('data-case') === 'voice');
+  const unknown = cases.find((item) => item.getAttribute('data-case') === 'unknown');
+
+  assert.equal(commands.readPrimaryComposerAction([stop]), 'stop');
+  assert.equal(commands.readPrimaryComposerAction([send]), 'send');
+  assert.equal(commands.readPrimaryComposerAction([voice]), 'voice');
+  assert.equal(commands.readPrimaryComposerAction([unknown]), 'unknown');
+});
+
+test('a submit-typed Voice control is classified as idle, not as Send', async () => {
+  const commands = await loadComposerCommands();
+  const html = await fs.readFile(path.resolve('test/fixtures/chat-dom/composer-primary-actions.html'), 'utf8');
+  const voiceSubmit = parseCapturedHtml(html).querySelectorAll('[data-case="voice-submit"]')[0];
+
+  assert.equal(commands.readPrimaryComposerAction([voiceSubmit]), 'voice');
 });

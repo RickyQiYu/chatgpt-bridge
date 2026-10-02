@@ -11,6 +11,24 @@ import { makeEvent } from '../requestState.js';
 import { BrowserTabCoordinator } from './browserTabCoordinator.js';
 import { isRequestRuntimeFinished } from './requestRuntimeProjection.js';
 
+function hasFreshVoiceIdleComposer(client = {}) {
+  if (!['extension'].includes(String(client.runtime || client.transport || '').toLowerCase())) return true;
+  const observation = client.tabObservation || {};
+  const observedAt = Number(observation.observedAt);
+  const now = Date.now();
+  const freshnessMs = Math.max(1_000, Number(config.clientStaleMs) || 30_000);
+  return Boolean(
+    Number.isFinite(observedAt) && observedAt > 0 && observedAt <= now && now - observedAt <= freshnessMs
+    && Number(observation.stableForMs) >= 750
+    && observation.document?.pageReady === true
+    && observation.document?.chatMainReady === true
+    && observation.composer?.ready === true
+    && observation.composer?.primaryAction === 'voice'
+    && observation.composer?.hasDraft === false
+    && ['idle', 'stopped'].includes(String(observation.generation?.state || ''))
+  );
+}
+
 /**
  * Owns prompt-tab selection, automatic tab creation, browser-control routing,
  * and extension reload/reconnect waits. It does not own request lifecycle state;
@@ -65,9 +83,44 @@ isPromptClientIdle(client = {}, excludeRequestId = '') {
   if (client.compatible === false || client.compatibility?.compatible === false) return false;
   if (client.quarantined) return false;
   if (client.activeRequest?.requestId) return false;
+  if (!hasFreshVoiceIdleComposer(client)) return false;
   if (this.releaseCoordinator?.isReleasePending?.(client.id)) return false;
   if (this.pendingUsesClient(client.id, excludeRequestId)) return false;
   return true;
+}
+
+async waitForPromptClientIdle(state, initialClient = {}, timeoutMs = 5_000) {
+  const clientId = String(initialClient.id || '');
+  const currentClient = () => Array.from(this.hub.clients || []).find((client) => client?.id === clientId) || initialClient;
+  const idleClient = () => {
+    const client = currentClient();
+    return this.isPromptClientIdle(client, state?.requestId || '') ? client : null;
+  };
+  const immediate = idleClient();
+  if (immediate) return immediate;
+
+  return await new Promise((resolve, reject) => {
+    let settled = false;
+    let timer = null;
+    const finish = (error, client = null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      this.hub.off?.('client.activity', onActivity);
+      this.hub.off?.('client.changed', onActivity);
+      if (error) reject(error);
+      else resolve(client);
+    };
+    const onActivity = (activity = {}) => {
+      if (activity.clientId && String(activity.clientId) !== clientId) return;
+      const idle = idleClient();
+      if (idle) finish(null, idle);
+    };
+    this.hub.on?.('client.activity', onActivity);
+    this.hub.on?.('client.changed', onActivity);
+    timer = setTimeout(() => finish(new Error(`Timed out waiting for a stable idle ChatGPT composer on ${clientId || 'the opened tab'}`)), Math.max(0, Number(timeoutMs) || 0));
+    onActivity({ clientId });
+  });
 }
 
 rankPromptClients(clients = []) {
@@ -116,6 +169,7 @@ promptTargetUrl(chatOptions = {}) {
 
 async autoOpenPromptClient(state, chatOptions = {}, options = {}, reason = 'no_prompt_client') {
   const timeoutMs = Math.max(5_000, Number(options.autoOpenTabTimeoutMs) || this.runtimeOptions.autoOpenTabTimeoutMs);
+  const startedAt = Date.now();
   const launchToken = `bridge-auto-${makeRequestId()}`;
   const url = this.promptTargetUrl(chatOptions);
   this.lifecycle.emitRequestEvent(state, makeEvent('client.auto_open.requested', {
@@ -133,8 +187,10 @@ async autoOpenPromptClient(state, chatOptions = {}, options = {}, reason = 'no_p
       bootstrapWaitMs: Number(options.autoOpenTabBootstrapWaitMs ?? this.runtimeOptions.autoOpenTabBootstrapWaitMs),
       allowSystemFallback: true,
     });
-    const client = opened.client;
-    if (!client?.id || !this.isPromptClientIdle(client, state.requestId)) {
+    const client = opened.client?.id
+      ? await this.waitForPromptClientIdle(state, opened.client, Math.max(0, timeoutMs - (Date.now() - startedAt)))
+      : null;
+    if (!client?.id) {
       throw new Error(`Auto-opened ChatGPT tab is not idle: ${client?.id || 'unknown client'}`);
     }
     this.lifecycle.emitRequestEvent(state, makeEvent('client.auto_open.completed', {

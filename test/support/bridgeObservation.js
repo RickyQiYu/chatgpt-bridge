@@ -44,17 +44,23 @@ export function emitTabObservation(hub, {
   stableForMs = generation === 'stopped' ? 2_000 : 0,
   finalMessage = generation === 'stopped',
   activeRequest = true,
+  leaseId = '',
+  ownerServerInstanceId = '',
+  observerId = 'test-observer',
   session = null,
 } = {}) {
   revision += 1;
   const observation = {
     schemaVersion: 4,
+    observerId,
     revision,
     observedAt: Date.now(),
     stableForMs,
     conversationId,
     activeRequest: activeRequest ? {
       requestId,
+      leaseId,
+      ownerServerInstanceId,
       responseEpoch,
       submittedUserTurnKey: userTurnKey,
       submittedUserTurnIndex: 0,
@@ -62,6 +68,12 @@ export function emitTabObservation(hub, {
       assistantTurnIndex: 1,
       ...(typeof activeRequest === 'object' ? activeRequest : {}),
     } : null,
+    document: { state: 'ready', pageReady: true, chatMainReady: true },
+    composer: {
+      state: 'ready', ready: true,
+      primaryAction: generation === 'active' ? 'stop' : 'voice',
+      hasDraft: false,
+    },
     turn: {
       key: assistantTurnKey,
       index: 1,

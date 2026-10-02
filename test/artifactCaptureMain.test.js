@@ -99,6 +99,35 @@ test('main-world artifact bridge leaves Blob URLs, clicks, and window.open untou
   assert.equal(context.window.__chatgptBridgeArtifactCaptureMainV1.hooksInstalled(), false);
 });
 
+test('page-main composer setter refuses to replace text entered after the caller observed an empty composer', async () => {
+  const harness = await loadHarness();
+  const composer = {
+    tagName: 'TEXTAREA',
+    value: 'my draft',
+    disabled: false,
+    readOnly: false,
+    getAttribute() { return null; },
+    getClientRects() { return [{}]; },
+    focus() {},
+    dispatchEvent() { return true; },
+  };
+  harness.document.querySelectorAll = () => [composer];
+  harness.window.getComputedStyle = () => ({ display: 'block', visibility: 'visible', opacity: '1' });
+
+  harness.window.postMessage({
+    source: 'chatgpt-browser-bridge-composer-content-v1',
+    type: 'composer.set',
+    requestId: 'composer-race',
+    expectedCurrentText: '',
+    text: 'automated prompt',
+  });
+
+  assert.equal(composer.value, 'my draft');
+  const result = harness.messages.find((message) => message.type === 'composer.set.result');
+  assert.equal(result?.result?.ok, false, JSON.stringify(harness.messages));
+  assert.equal(result?.result?.error, 'composer_changed_before_write');
+});
+
 test('armed artifact capture returns generated Blob bytes, suppresses only the matched download, then restores page APIs', async () => {
   const harness = await loadHarness();
   const { context, window, originals, messages } = harness;

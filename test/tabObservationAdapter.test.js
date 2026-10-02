@@ -41,6 +41,135 @@ test('tab observations become normalized canonical request events', () => {
   assert.equal(event.data.requestReplaced, false);
 });
 
+test('a stable exact Voice-idle observation identifies a submitted request with no response boundary for cleanup', () => {
+  const currentState = {
+    requestId: 'req-1',
+    source: {
+      clientId: 'client-1', leaseId: 'lease-1', ownerServerInstanceId: 'server-1', conversationId: 'session-1',
+    },
+    lifecycle: 'submitted',
+    submission: 'submitted',
+    response: { epoch: 0, userTurnKey: '' },
+    responseRetry: { status: 'idle' },
+    effect: {
+      browser: { activeId: null },
+      coordinator: { activeId: null },
+    },
+  };
+  const idle = observation({
+    observerId: 'observer-idle',
+    revision: 9,
+    observedAt: 10_000,
+    stableForMs: 900,
+    activeRequest: {
+      requestId: 'req-1', leaseId: 'lease-1', ownerServerInstanceId: 'server-1', responseEpoch: 0,
+      submittedUserTurnKey: '',
+    },
+    composer: { state: 'ready', ready: true, primaryAction: 'voice', hasDraft: false },
+    document: { pageReady: true, chatMainReady: true },
+    generation: { state: 'stopped', stopVisible: false },
+    blocker: { state: 'none' },
+    output: { state: 'none', answer: '', thinking: '', progress: '' },
+    error: { explicit: false, retryable: false, code: '', userTurnKey: '' },
+    turn: { key: '', userKey: '', index: -1 },
+  });
+  const event = tabObservationToCanonicalEvent('req-1', 'client-1', { observation: idle }, currentState, 10_000);
+
+  assert.equal(event.data.unconfirmedPromptTerminal, true);
+  assert.equal(event.data.recoveryMode, 'stale_lease');
+  assert.equal(event.data.safeToRetryAsNewRequest, true);
+});
+
+test('unconfirmed prompt cleanup requires stable Voice idle and no conflicting lifecycle evidence', () => {
+  const currentState = {
+    requestId: 'req-1',
+    source: { clientId: 'client-1', leaseId: 'lease-1', ownerServerInstanceId: 'server-1', conversationId: 'session-1' },
+    lifecycle: 'submitted', submission: 'submitted', response: { epoch: 0, userTurnKey: '' },
+    responseRetry: { status: 'idle' },
+    effect: { browser: { activeId: null }, coordinator: { activeId: null } },
+  };
+  const base = observation({
+    observerId: 'observer-idle', revision: 10, observedAt: 10_000, stableForMs: 900,
+    activeRequest: {
+      requestId: 'req-1', leaseId: 'lease-1', ownerServerInstanceId: 'server-1', responseEpoch: 0,
+      submittedUserTurnKey: '',
+    },
+    composer: { state: 'ready', ready: true, primaryAction: 'voice', hasDraft: false },
+    document: { pageReady: true, chatMainReady: true },
+    generation: { state: 'stopped' }, blocker: { state: 'none' },
+    output: { state: 'none', answer: '' }, error: { explicit: false },
+    turn: { key: '', userKey: '', index: -1 },
+  });
+  const cases = [
+    ['stop active', { composer: { state: 'ready', primaryAction: 'stop' }, generation: { state: 'active' } }],
+    ['unknown control', { composer: { state: 'ready', primaryAction: 'unknown' } }],
+    ['unstable idle', { stableForMs: 500 }],
+    ['different lease', { activeRequest: { requestId: 'req-1', leaseId: 'other', ownerServerInstanceId: 'server-1', responseEpoch: 0 } }],
+  ];
+  for (const [name, override] of cases) {
+    const event = tabObservationToCanonicalEvent('req-1', 'client-1', {
+      observation: { ...base, ...override },
+    }, currentState, 10_000);
+    assert.notEqual(event.data.unconfirmedPromptTerminal, true, name);
+  }
+  const sendDraft = tabObservationToCanonicalEvent('req-1', 'client-1', {
+    observation: { ...base, composer: { state: 'ready', ready: true, primaryAction: 'send', hasDraft: true } },
+  }, currentState, 10_000);
+  assert.equal(sendDraft.data.unconfirmedPromptTerminal, true);
+  assert.equal(sendDraft.data.safeToRetryAsNewRequest, false);
+  assert.match(sendDraft.data.message, /draft is preserved/i);
+  const priorOutput = tabObservationToCanonicalEvent('req-1', 'client-1', {
+    observation: {
+      ...base,
+      output: { state: 'final', answer: 'The previous turn remains visible' },
+      turn: { key: 'assistant-old', userKey: 'user-old', index: 3 },
+      error: { explicit: true, retryable: true, code: 'CHATGPT_TRANSIENT_REQUEST_ERROR', userTurnKey: 'user-old' },
+      blocker: { state: 'explicit_error' },
+    },
+  }, currentState, 10_000);
+  assert.equal(priorOutput.data.unconfirmedPromptTerminal, true, 'unbound prior output cannot establish this request response');
+  assert.equal(priorOutput.data.safeToRetryAsNewRequest, true);
+  const voiceWithDraft = tabObservationToCanonicalEvent('req-1', 'client-1', {
+    observation: {
+      ...base,
+      composer: { state: 'ready', ready: true, primaryAction: 'voice', hasDraft: true },
+    },
+  }, currentState, 10_000);
+  assert.equal(voiceWithDraft.data.unconfirmedPromptTerminal, true);
+  assert.equal(voiceWithDraft.data.safeToRetryAsNewRequest, false);
+  assert.match(voiceWithDraft.data.message, /draft is preserved/i);
+  const withActiveEffect = tabObservationToCanonicalEvent('req-1', 'client-1', {
+    observation: base,
+  }, { ...currentState, effect: { browser: { activeId: 'effect-1' }, coordinator: { activeId: null } } }, 10_000);
+  assert.notEqual(withActiveEffect.data.unconfirmedPromptTerminal, true, 'unresolved browser effect');
+  const withRetry = tabObservationToCanonicalEvent('req-1', 'client-1', {
+    observation: base,
+  }, { ...currentState, responseRetry: { status: 'scheduled' } }, 10_000);
+  assert.notEqual(withRetry.data.unconfirmedPromptTerminal, true, 'scheduled response retry');
+});
+
+test('canonical request reducer terminalizes a boundary-less idle prompt as recoverable uncertainty and releases its lease', () => {
+  let state = reduceRequestState(null, createRequestEvent(RequestEventType.CREATED, 'req-1', {
+    sourceClientId: 'client-1', leaseId: 'lease-1', ownerServerInstanceId: 'server-1', sessionId: 'session-1',
+  }, { occurredAt: 1, receivedAt: 1 })).state;
+  state = reduceRequestState(state, createRequestEvent(RequestEventType.PROMPT_ACCEPTED, 'req-1', {}, {
+    occurredAt: 2, receivedAt: 2,
+  })).state;
+  state = reduceRequestState(state, createRequestEvent(RequestEventType.PROMPT_SUBMITTED, 'req-1', {}, {
+    occurredAt: 3, receivedAt: 3,
+  })).state;
+  const outcome = reduceRequestState(state, createRequestEvent(RequestEventType.OBSERVATION_UPDATED, 'req-1', {
+    clientId: 'client-1', responseEpoch: 0, unconfirmedPromptTerminal: true, recoveryMode: 'stale_lease',
+    recoverable: true, safeToRetryAsNewRequest: true,
+    message: 'ChatGPT is idle without a confirmed submitted user turn',
+  }, { occurredAt: 10, receivedAt: 10 }));
+
+  assert.equal(outcome.state.terminal.code, 'recovery_uncertain');
+  assert.equal(outcome.state.terminal.evidence.safeToRetryAsNewRequest, true);
+  assert.equal(outcome.effects[0].type, 'request.release.requested');
+  assert.equal(outcome.effects[0].data.recoveryMode, 'stale_lease');
+});
+
 test('semantic-neutral freshness captures do not count as meaningful request progress', () => {
   const created = createRequestEvent(RequestEventType.CREATED, 'req-1', { sessionId: 'session-1' }, { occurredAt: 1, receivedAt: 1 });
   let state = reduceRequestState(null, created).state;

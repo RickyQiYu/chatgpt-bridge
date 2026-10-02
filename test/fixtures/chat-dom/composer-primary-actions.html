@@ -1,0 +1,28 @@
+<main>
+  <section data-case="stop">
+    <form data-testid="composer">
+      <button type="submit" data-testid="stop-button" aria-label="Stop generating">Stop</button>
+    </form>
+  </section>
+  <section data-case="send">
+    <form data-testid="composer">
+      <button type="submit" data-testid="send-button" aria-label="Send prompt">Send</button>
+      <button data-testid="composer-speech-button" aria-label="Start voice mode">Voice</button>
+    </form>
+  </section>
+  <section data-case="voice">
+    <form data-testid="composer">
+      <button data-testid="composer-speech-button" aria-label="Start voice mode">Voice</button>
+    </form>
+  </section>
+  <section data-case="voice-submit">
+    <form data-testid="composer">
+      <button type="submit" data-testid="composer-speech-button" aria-label="Voice">Voice</button>
+    </form>
+  </section>
+  <section data-case="unknown">
+    <form data-testid="composer">
+      <button aria-label="More options">Options</button>
+    </form>
+  </section>
+</main>

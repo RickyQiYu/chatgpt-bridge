@@ -156,6 +156,9 @@
     const composerState = presence.composerReady === true
       ? ComposerState.READY
       : presence.composerReady === false ? ComposerState.MISSING : ComposerState.UNKNOWN;
+    const primaryComposerAction = ['stop', 'send', 'voice'].includes(string(presence.primaryComposerAction))
+      ? string(presence.primaryComposerAction)
+      : 'unknown';
     const blocker = snapshot.hasError || snapshot.phase === 'ERROR'
       ? BlockerState.EXPLICIT_ERROR
       : snapshot.needsConfirmation ? BlockerState.CONFIRMATION
@@ -185,6 +188,8 @@
       composer: {
         state: composerState,
         ready: Boolean(presence.composerReady),
+        primaryAction: primaryComposerAction,
+        hasDraft: presence.composerHasDraft === true,
       },
       turn: {
         state: turn,
@@ -293,6 +298,8 @@
       Boolean(observation.document?.chatMainReady),
       Boolean(observation.document?.pageReady),
       observation.composer?.state || '',
+      observation.composer?.primaryAction || 'unknown',
+      Boolean(observation.composer?.hasDraft),
       observation.turn?.state || '',
       observation.turn?.phase || '',
       observation.turn?.key || '',
@@ -343,6 +350,8 @@
     const output = observation.output || {};
     return JSON.stringify([
       observation.conversationId || '',
+      observation.composer?.primaryAction || 'unknown',
+      Boolean(observation.composer?.hasDraft),
       observation.turn?.key || '',
       observation.turn?.userKey || '',
       observation.turn?.messageId || '',

@@ -106,7 +106,7 @@ test('active request heartbeat keeps long ChatGPT generations alive past the idl
   await bridge.close();
 });
 
-test('request still times out when no request messages or activeRequest heartbeats arrive', async () => {
+test('silent request timeout does not forcibly stop ChatGPT or release a lease without Voice-idle proof', async () => {
   const hub = new FakeHub();
   const bridge = new BrowserBridge(hub);
 
@@ -117,6 +117,8 @@ test('request still times out when no request messages or activeRequest heartbea
   await sleep(130);
   await promise;
   assert.match(error?.message || '', /Timed out waiting for ChatGPT request progress after 100ms|Source ChatGPT tab\/client disconnected/);
-  assert.ok(hub.sent.some((entry) => entry.payload.type === 'prompt.cancel'), 'silent requests should still be cancelled');
+  assert.equal(hub.sent.some((entry) => entry.payload.type === 'prompt.cancel'), false);
+  assert.equal(hub.sent.some((entry) => entry.payload.type === 'request.release'), false);
+  assert.equal(bridge.health().pendingRequests, 0);
   await bridge.close();
 });

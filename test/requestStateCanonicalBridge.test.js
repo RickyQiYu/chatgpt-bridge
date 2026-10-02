@@ -154,6 +154,67 @@ test('canonical explicit UI errors terminate a pending bridge request immediatel
   assert.equal(diagnostics.state.lifecycle, 'failed');
 });
 
+test('stable Voice-idle evidence releases a submitted request whose user-turn boundary was never confirmed', async () => {
+  const hub = new FakeHub();
+  const bridge = new BrowserBridge(hub);
+  const requestPromise = bridge.sendRequest({ message: 'unconfirmed composer submission', sessionId: 'session-1' });
+  const rejection = assert.rejects(requestPromise, (error) => {
+    assert.equal(error.code, 'CANONICAL_RECOVERY_UNCERTAIN');
+    assert.equal(error.recoverable, true);
+    assert.match(error.message, /Voice idle control/i);
+    return true;
+  });
+  await nextTick();
+
+  const prompt = hub.sent.find((entry) => entry.payload.type === 'prompt.send')?.payload;
+  assert.ok(prompt);
+  emitPromptSubmitted(hub, { requestId: prompt.requestId });
+  const current = bridge.requestStateDiagnostics(prompt.requestId).state;
+  hub.emit('client.activity', {
+    clientId: 'client-1',
+    client: { ...hub.activeClient, activeRequest: {
+      requestId: prompt.requestId,
+      leaseId: current.source.leaseId,
+      ownerServerInstanceId: current.source.ownerServerInstanceId,
+      responseEpoch: current.response.epoch,
+      submittedUserTurnKey: '',
+    } },
+    payload: {
+      type: 'tab.observation',
+      observation: {
+        observerId: 'observer-idle',
+        revision: 100,
+        observedAt: Date.now(),
+        stableForMs: 900,
+        conversationId: 'session-1',
+        activeRequest: {
+          requestId: prompt.requestId,
+          leaseId: current.source.leaseId,
+          ownerServerInstanceId: current.source.ownerServerInstanceId,
+          responseEpoch: current.response.epoch,
+          submittedUserTurnKey: '',
+        },
+        document: { pageReady: true, chatMainReady: true },
+        composer: { state: 'ready', ready: true, primaryAction: 'voice', hasDraft: false },
+        generation: { state: 'stopped', stopVisible: false },
+        blocker: { state: 'none' },
+        output: { state: 'none', answer: '', thinking: '', progress: '' },
+        artifact: { state: 'none', count: 0 },
+        artifacts: [],
+        error: { explicit: false, retryable: false, code: '', userTurnKey: '' },
+        turn: { key: '', userKey: '', index: -1 },
+      },
+    },
+  });
+
+  await rejection;
+  await nextTick();
+  const released = hub.sent.find((entry) => entry.payload.type === 'request.release')?.payload;
+  assert.equal(released?.recoveryMode, 'stale_lease');
+  assert.equal(released?.requestId, prompt.requestId);
+  assert.equal(bridge.health().pendingRequests, 0);
+});
+
 test('canonical mismatch protection waits until prompt acceptance before failing', async () => {
   const hub = new FakeHub();
   const bridge = new BrowserBridge(hub);
@@ -234,11 +295,15 @@ test('stable Protocol 5 observations are finalized by the server before the tab 
   const prompt = hub.sent.find((entry) => entry.payload.type === 'prompt.send')?.payload;
   assert.ok(prompt);
   emitPromptSubmitted(hub, { requestId: prompt.requestId });
+  const releaseIdentity = bridge.requestStateDiagnostics(prompt.requestId).state;
   emitTabObservation(hub, {
     requestId: prompt.requestId,
     conversationId: 'session-1',
     assistantTurnKey: 'turn-terminal',
     answer: 'canonical final answer',
+    leaseId: releaseIdentity.source.leaseId,
+    ownerServerInstanceId: releaseIdentity.source.ownerServerInstanceId,
+    responseEpoch: releaseIdentity.response.epoch,
   });
 
   const response = await requestPromise;
@@ -259,11 +324,15 @@ test('terminal completion resolves without waiting for request.release acknowled
   const prompt = hub.sent.find((entry) => entry.payload.type === 'prompt.send')?.payload;
   assert.ok(prompt);
   emitPromptSubmitted(hub, { requestId: prompt.requestId });
+  const releaseIdentity = bridge.requestStateDiagnostics(prompt.requestId).state;
   emitTabObservation(hub, {
     requestId: prompt.requestId,
     conversationId: 'session-1',
     assistantTurnKey: 'assistant-published',
     answer: 'published first',
+    leaseId: releaseIdentity.source.leaseId,
+    ownerServerInstanceId: releaseIdentity.source.ownerServerInstanceId,
+    responseEpoch: releaseIdentity.response.epoch,
   });
 
   const response = await Promise.race([
@@ -285,11 +354,15 @@ test('late request.release errors do not replace an already published terminal r
   const prompt = hub.sent.find((entry) => entry.payload.type === 'prompt.send')?.payload;
   assert.ok(prompt);
   emitPromptSubmitted(hub, { requestId: prompt.requestId });
+  const releaseIdentity = bridge.requestStateDiagnostics(prompt.requestId).state;
   emitTabObservation(hub, {
     requestId: prompt.requestId,
     conversationId: 'session-1',
     assistantTurnKey: 'assistant-late-release',
     answer: 'terminal remains successful',
+    leaseId: releaseIdentity.source.leaseId,
+    ownerServerInstanceId: releaseIdentity.source.ownerServerInstanceId,
+    responseEpoch: releaseIdentity.response.epoch,
   });
 
   const response = await requestPromise;
@@ -409,6 +482,32 @@ test('browser preparation effect failures reject immediately with the original e
     },
   });
   await rejection;
+  assert.equal(hub.sent.some((entry) => entry.payload.type === 'request.release' && entry.payload.requestId === prompt.requestId), false);
+  const terminal = bridge.requestStateDiagnostics(prompt.requestId).state;
+  const activeRequest = {
+    requestId: prompt.requestId,
+    leaseId: terminal.source.leaseId,
+    ownerServerInstanceId: terminal.source.ownerServerInstanceId,
+    responseEpoch: terminal.response.epoch,
+    submittedUserTurnKey: '',
+  };
+  const observation = {
+    observerId: 'observer-idle-after-error', revision: 10, observedAt: Date.now(), stableForMs: 900,
+    conversationId: 'session-1', activeRequest,
+    document: { pageReady: true, chatMainReady: true },
+    composer: { state: 'ready', ready: true, primaryAction: 'voice', hasDraft: false },
+    generation: { state: 'stopped' }, blocker: { state: 'none' },
+    output: { state: 'none' }, artifact: { state: 'none', count: 0 }, artifacts: [],
+    error: { explicit: false }, turn: { key: '', userKey: '' },
+  };
+  hub.readyClients.set('client-1', {
+    ...hub.activeClient, ready: true, compatible: true, activeRequest, tabObservation: observation,
+  });
+  hub.emit('client.activity', {
+    clientId: 'client-1', client: hub.readyClients.get('client-1'),
+    payload: { type: 'tab.observation', observation },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
   assert.ok(hub.sent.some((entry) => entry.payload.type === 'request.release' && entry.payload.requestId === prompt.requestId));
 });
 

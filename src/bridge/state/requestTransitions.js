@@ -105,6 +105,31 @@ export function sourceSequenceDecision(state, event) {
 export function terminalReleaseEffect(state, code, event) {
   const sourceClientId = String(state?.source?.clientId || '');
   if (!sourceClientId) return [];
+  const observation = event?.data?.observation && typeof event.data.observation === 'object'
+    ? event.data.observation
+    : null;
+  const observedLease = observation?.activeRequest || {};
+  const releaseEvidence = observation && observedLease.requestId === state.requestId
+      && observedLease.leaseId === state.source?.leaseId
+      && observedLease.ownerServerInstanceId === state.source?.ownerServerInstanceId
+      && Number(observedLease.responseEpoch) === Number(state.response?.epoch || 0)
+    ? {
+      observerId: String(observation.observerId || ''),
+      revision: Number(observation.revision) || 0,
+      observedAt: Number(observation.observedAt) || 0,
+      stableForMs: Number(observation.stableForMs) || 0,
+      requestId: String(observedLease.requestId || ''),
+      leaseId: String(observedLease.leaseId || ''),
+      ownerServerInstanceId: String(observedLease.ownerServerInstanceId || ''),
+      responseEpoch: Number(observedLease.responseEpoch),
+      composerReady: observation.composer?.ready === true,
+      composerAction: String(observation.composer?.primaryAction || 'unknown'),
+      composerHasDraft: observation.composer?.hasDraft === true,
+      pageReady: observation.document?.pageReady === true,
+      chatMainReady: observation.document?.chatMainReady === true,
+      generation: String(observation.generation?.state || 'unknown'),
+    }
+    : null;
   return [{
     id: `request-release:${state.requestId}:${event?.eventId || code}`,
     type: RequestEffectType.REQUEST_RELEASE,
@@ -113,6 +138,10 @@ export function terminalReleaseEffect(state, code, event) {
       sourceClientId,
       terminalCode: code,
       reason: String(event?.data?.message || code || 'request_terminal'),
+      // A terminal lifecycle does not prove the visible composer is safe to
+      // reuse. Keep the physical lease until the extension confirms Voice idle.
+      recoveryMode: 'stale_lease',
+      releaseEvidence,
     },
   }];
 }
@@ -176,6 +205,22 @@ export function applyObservation(state, event) {
   }
   if (data.requestReplaced === true) {
     return terminalResult(next, RequestTerminalCode.REQUEST_REPLACED, 'Source tab replaced the active request', data, event, diagnostics);
+  }
+  if (data.unconfirmedPromptTerminal === true
+      && data.recoveryMode === 'stale_lease'
+      && next.submission === SubmissionState.SUBMITTED
+      && !String(next.response?.userTurnKey || '').trim()
+      && next.responseRetry?.status === 'idle'
+      && !next.effect?.browser?.activeId
+      && !next.effect?.coordinator?.activeId) {
+    return terminalResult(
+      next,
+      RequestTerminalCode.RECOVERY_UNCERTAIN,
+      String(data.message || 'ChatGPT returned to idle without a confirmed submitted user turn'),
+      { ...data, recoverable: true, safeToRetryAsNewRequest: data.safeToRetryAsNewRequest === true },
+      event,
+      diagnostics,
+    );
   }
   const recoveredFinalOutput = data.completionCandidate === true
     && data.completionEvidence?.transientErrorAfterFinalOutput === true

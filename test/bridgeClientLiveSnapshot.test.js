@@ -76,3 +76,39 @@ test('request-scoped observations project the real steer controls into canonical
   assert.equal(progressUpdates.at(-1)?.options?.emit, false);
   assert.equal(progressUpdates.at(-1)?.payload?.meaningful, false);
 });
+
+test('a terminal orphan lease is released only when a later observation proves stable Voice idle', async () => {
+  const releaseCalls = [];
+  const router = new BridgeClientEventRouter({
+    pending: new Map(), commands: new Map(), artifacts: new Map(), lifecycle: {},
+    publishObservedTurn() {}, registerObservedArtifacts: (items) => items, handleCommandResponse() {},
+    releaseStaleRequestLease: async (...args) => { releaseCalls.push(args); return { status: 'confirmed' }; },
+  });
+  const identity = {
+    requestId: 'request-orphan', clientId: 'client-1', leaseId: 'lease-orphan',
+    ownerServerInstanceId: 'server-old', responseEpoch: 3,
+  };
+  const client = {
+    id: identity.clientId, ready: true, compatible: true,
+    activeRequest: {
+      requestId: identity.requestId, leaseId: identity.leaseId,
+      ownerServerInstanceId: identity.ownerServerInstanceId, responseEpoch: identity.responseEpoch,
+    },
+  };
+  router.handleClientActivity(identity.clientId, client, {
+    type: 'tab.observation',
+    observation: {
+      observerId: 'observer-idle', revision: 3, observedAt: Date.now(), stableForMs: 900,
+      activeRequest: client.activeRequest,
+      document: { pageReady: true, chatMainReady: true },
+      composer: { ready: true, primaryAction: 'voice', hasDraft: false },
+      generation: { state: 'stopped' },
+    },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(releaseCalls.length, 1);
+  assert.deepEqual(releaseCalls[0][0], identity);
+  assert.equal(releaseCalls[0][1].id, identity.clientId);
+  assert.equal(releaseCalls[0][1].tabObservation.observerId, 'observer-idle');
+});

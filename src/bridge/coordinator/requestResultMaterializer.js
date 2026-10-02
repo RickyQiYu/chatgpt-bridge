@@ -13,7 +13,6 @@ import {
   RequestEventType,
   RequestTerminalCode,
 } from '../state/requestEvents.js';
-import { createRequestEffectDescriptor } from '../requestExecutionPlan.js';
 import { canonicalGenerationActive, isRequestRuntimeFinished, markRequestRuntimeFinished } from './requestRuntimeProjection.js';
 
 /**
@@ -181,36 +180,10 @@ export class RequestResultMaterializer {
       || `CANONICAL_${String(code || 'failed').toUpperCase()}`;
     error.phase = canonicalState.lifecycle || state.progress?.phase || '';
     error.canonicalTerminal = terminal;
-    if (code === RequestTerminalCode.SOURCE_LOST) error.recoverable = true;
-    if (code === RequestTerminalCode.DEADLINE_EXCEEDED && state.clientId) {
-      try {
-        const request = owner.requestIdentity(state);
-        const effect = createRequestEffectDescriptor({
-          request,
-          kind: 'prompt.cancel',
-          logicalId: `${state.requestId}:prompt.cancel:deadline:responseEpoch:${request.responseEpoch}`,
-          causationId: `${state.requestId}:deadline-cancel`,
-          preconditions: {
-            terminalCode: String(code || ''),
-            terminalRevision: Math.max(0, Number(canonicalState.revision) || 0),
-          },
-        });
-        await owner.sendCommand('prompt.cancel', {
-          requestId: state.requestId,
-          reason: terminal.message,
-          effect,
-        }, {
-          sourceClientId: state.clientId,
-          timeoutMs: 10_000,
-          request,
-        });
-      } catch (cancelError) {
-        owner.eventBus?.emitDebug({
-          type: 'request.deadline.cancel_failed',
-          requestId: state.requestId,
-          data: { message: cancelError?.message || String(cancelError) },
-        });
-      }
+    if (code === RequestTerminalCode.SOURCE_LOST
+      || terminal.evidence?.recoverable === true
+      || terminal.evidence?.safeToRetryAsNewRequest === true) {
+      error.recoverable = true;
     }
     this.finish(state, error, '', {
       finishReason: code === RequestTerminalCode.SOURCE_LOST ? 'recoverable_failed' : 'canonical_state_failure',
