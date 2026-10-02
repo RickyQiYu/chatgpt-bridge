@@ -52,6 +52,8 @@ test('mock startup observation uses the production TabObservation schema and sta
       documentReadyState: 'interactive',
       chatMainReady: true,
       composerReady: true,
+      primaryComposerAction: observation.composer.primaryAction,
+      composerHasDraft: observation.composer.hasDraft,
       pageReady: true,
     },
     snapshot: {},

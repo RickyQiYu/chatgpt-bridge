@@ -50,7 +50,7 @@
     const PROMPT_ADMISSION = globalThis.ChatGptRequestPromptAdmission;
     if (!PROMPT_ADMISSION) throw new Error('ChatGPT prompt admission module was not loaded before requestPromptCommands.js');
     const { handleRequestRelease } = REQUEST_RELEASE_FACTORY.createRequestReleaseCommand({
-      diagnostic, findStopButton, getActiveRequest, isGenerating, releaseRequest, settleReleaseCleanup,
+      diagnostic, getActiveRequest, releaseRequest, settleReleaseCleanup,
     });
     const responseRetryApi = RESPONSE_RETRY_FACTORY.createRequestResponseRetry({
       diagnostic, getAssistantNodes, getTurnNodes, readSubmittedUserTurnError, settleEffectCommandWithoutExecution, simpleHash, turnKey,
@@ -208,6 +208,16 @@
           throw Object.assign(new Error(`Unsupported prompt execution step: ${currentStepKind}`), { code: 'REQUEST_EXECUTION_PLAN_INVALID' });
         }
 
+        const primaryComposerAction = String(globalThis.ChatGptComposerCommands?.readPrimaryComposerAction?.() || 'unknown');
+        const composerHasDraft = globalThis.ChatGptComposerCommands?.hasComposerDraft?.();
+        if (primaryComposerAction !== 'voice' || composerHasDraft !== false) {
+          scheduleTabObservation('prompt.submit.blocked_composer', 0);
+          throw Object.assign(new Error('ChatGPT composer is not idle; the existing draft or generation was preserved'), {
+            code: 'PROMPT_COMPOSER_NOT_IDLE',
+            provenNotExecuted: true,
+          });
+        }
+
         request.update('request.anchor_updated', {
           baselineAssistantCount: getAssistantNodes().length,
           baselineTurnKeys: new Set(getTurnNodes().map((turn, index) => turnKey(turn, index)).filter(Boolean)),
@@ -258,6 +268,9 @@
         collectAndEmit(request);
 
       } catch (err) {
+        if (['PROMPT_COMPOSER_NOT_IDLE', 'PROMPT_COMPOSER_CHANGED_DURING_SUBMISSION', 'PROMPT_SUBMIT_NOT_READY'].includes(String(err?.code || ''))) {
+          scheduleTabObservation('prompt.submit.blocked_composer', 0);
+        }
         if (!err?.bridgeEffectReported) {
           await settleEffectCommandWithoutExecution(payload, currentStepKind, currentStep, err, { request });
         }

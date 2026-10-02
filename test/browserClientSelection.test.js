@@ -4,6 +4,7 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { BrowserBridge } from '../src/browserBridge.js';
+import { BrowserClientCoordinator } from '../src/bridge/coordinator/browserClientCoordinator.js';
 import { commandResult, emitPromptSubmitted, emitTabObservation } from './support/bridgeObservation.js';
 
 class ClientSelectionHub extends EventEmitter {
@@ -71,6 +72,81 @@ class ClientSelectionHub extends EventEmitter {
 
 function nextTick() { return new Promise((resolve) => setImmediate(resolve)); }
 
+test('extension prompt admission requires a fresh stable Voice composer, not Send, Stop, or unknown', () => {
+  const client = {
+    id: 'client-composer-readiness', runtime: 'extension', ready: true, compatible: true, activeRequest: null,
+    tabObservation: {
+      observerId: 'observer-ready', revision: 3, observedAt: Date.now(), stableForMs: 900,
+      document: { pageReady: true, chatMainReady: true },
+      composer: { ready: true, primaryAction: 'voice', hasDraft: false },
+      generation: { state: 'stopped' },
+    },
+  };
+  const hub = new ClientSelectionHub([client]);
+  const coordinator = new BrowserClientCoordinator({
+    hub, pending: new Map(), lifecycle: {}, runtimeOptions: {}, sendCommand: async () => ({}),
+  });
+
+  assert.equal(coordinator.isPromptClientIdle(client), true);
+  for (const primaryAction of ['send', 'stop', 'unknown']) {
+    assert.equal(coordinator.isPromptClientIdle({
+      ...client,
+      tabObservation: {
+        ...client.tabObservation,
+        composer: { ready: true, primaryAction },
+      },
+    }), false, primaryAction);
+  }
+  assert.equal(coordinator.isPromptClientIdle({
+    ...client,
+    tabObservation: {
+      ...client.tabObservation,
+      composer: { ready: true, primaryAction: 'voice', hasDraft: true },
+    },
+  }), false, 'Voice control with composer text');
+  assert.equal(coordinator.isPromptClientIdle({
+    ...client,
+    tabObservation: { ...client.tabObservation, observedAt: Date.now() - 31_000 },
+  }), false, 'stale observation');
+
+  const browserClient = { ...client, id: 'browser-websocket-client', runtime: 'browser' };
+  assert.equal(coordinator.isPromptClientIdle(browserClient), true);
+  assert.equal(coordinator.isPromptClientIdle({
+    ...browserClient,
+    tabObservation: {
+      ...browserClient.tabObservation,
+      composer: { ready: true, primaryAction: 'send', hasDraft: true },
+    },
+  }), false, 'browser websocket clients also need Voice-idle composer proof');
+});
+
+test('auto-opened extension prompt waits for a stable Voice-idle observation', async () => {
+  const client = {
+    id: 'client-new-tab', runtime: 'extension', ready: true, compatible: true, activeRequest: null,
+    tabObservation: {
+      observerId: 'observer-starting', revision: 1, observedAt: Date.now(), stableForMs: 0,
+      document: { pageReady: true, chatMainReady: true },
+      composer: { ready: true, primaryAction: 'unknown', hasDraft: false },
+      generation: { state: 'idle' },
+    },
+  };
+  const hub = new ClientSelectionHub([client]);
+  const coordinator = new BrowserClientCoordinator({
+    hub, pending: new Map(), lifecycle: {}, runtimeOptions: {}, sendCommand: async () => ({}),
+  });
+  const waiting = coordinator.waitForPromptClientIdle({ requestId: 'request-new-tab' }, client, 1_000);
+  setTimeout(() => {
+    client.tabObservation = {
+      ...client.tabObservation,
+      observerId: 'observer-stable', revision: 2, observedAt: Date.now(), stableForMs: 800,
+      composer: { ready: true, primaryAction: 'voice', hasDraft: false },
+    };
+    hub.emit('client.activity', { clientId: client.id, client });
+  }, 10);
+
+  assert.equal((await waiting).id, client.id);
+});
+
 async function finishPrompt(hub, clientId, prompt, answer = 'ok') {
   emitPromptSubmitted(hub, { requestId: prompt.requestId, clientId });
   emitTabObservation(hub, {
@@ -92,7 +168,27 @@ test('health projects the command registry physical release barrier without maki
   await nextTick();
   const prompt = hub.sent.find((entry) => entry.payload.type === 'prompt.send');
   assert.ok(prompt);
-  await finishPrompt(hub, 'client-release-projection', prompt.payload);
+  emitPromptSubmitted(hub, { requestId: prompt.payload.requestId, clientId: 'client-release-projection' });
+  const releaseIdentity = bridge.requestStateDiagnostics(prompt.payload.requestId).state;
+  const activeRequest = {
+    requestId: prompt.payload.requestId,
+    leaseId: releaseIdentity.source.leaseId,
+    ownerServerInstanceId: releaseIdentity.source.ownerServerInstanceId,
+    responseEpoch: releaseIdentity.response.epoch,
+    submittedUserTurnKey: 'user-1',
+  };
+  hub._clients[0].activeRequest = activeRequest;
+  const observation = emitTabObservation(hub, {
+    requestId: prompt.payload.requestId,
+    clientId: 'client-release-projection',
+    answer: 'ok',
+    conversationId: 'session-release',
+    activeRequest,
+    leaseId: releaseIdentity.source.leaseId,
+    ownerServerInstanceId: releaseIdentity.source.ownerServerInstanceId,
+    responseEpoch: releaseIdentity.response.epoch,
+  });
+  hub._clients[0].tabObservation = observation;
   for (let index = 0; index < 20 && !hub.sent.some((entry) => entry.payload.type === 'request.release'); index += 1) await nextTick();
   const release = hub.sent.find((entry) => entry.payload.type === 'request.release');
   assert.ok(release, 'bridge must start the physical release command after terminal completion');

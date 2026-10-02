@@ -18,6 +18,7 @@ import { RequestRecoveryCoordinator } from './requestRecoveryCoordinator.js';
 import { RequestResultMaterializer } from './requestResultMaterializer.js';
 import { RequestCancellationCoordinator } from './requestCancellationCoordinator.js';
 import { RequestResponseRetryCoordinator } from './requestResponseRetryCoordinator.js';
+import { voiceIdleReleaseEvidenceIsCurrent } from './requestReleaseEvidence.js';
 import { createRequestEffectDescriptor, resumePromptExecutionPlan } from '../requestExecutionPlan.js';
 import { canonicalGenerationActive, isRequestRuntimeFinished } from './requestRuntimeProjection.js';
 
@@ -163,14 +164,20 @@ export class RequestLifecycleCoordinator {
   if (effect.type === RequestEffectType.REQUEST_RELEASE) {
     const sourceClientId = String(effect.data?.sourceClientId || state.clientId || '');
     if (!sourceClientId) return { released: false, reason: 'source_client_missing' };
+    const request = this.requestIdentity(state);
+    if (effect.data?.recoveryMode === 'stale_lease'
+        && !voiceIdleReleaseEvidenceIsCurrent(effect.data?.releaseEvidence, request)) {
+      return { released: false, deferred: true, reason: 'composer_not_voice_idle' };
+    }
     const result = await this.sendCommand('request.release', {
       requestId: state.requestId,
       terminalCode: effect.data?.terminalCode || '',
       reason: effect.data?.reason || 'canonical_terminal',
+      ...(effect.data?.recoveryMode === 'stale_lease' ? { recoveryMode: 'stale_lease' } : {}),
     }, {
       sourceClientId,
       timeoutMs: 10_000,
-      request: this.requestIdentity(state),
+      request,
     });
     return { released: result?.released !== false, sourceClientId };
   }

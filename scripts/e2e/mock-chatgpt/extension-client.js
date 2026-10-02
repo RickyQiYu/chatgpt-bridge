@@ -764,7 +764,12 @@ export class MockExtensionTab extends EventEmitter {
       visibility: this.active ? 'visible' : 'hidden',
       focused: this.active && this.focused,
       document: { state: 'ready', readyState: this.documentReadyState, chatMainReady: true, pageReady: true },
-      composer: { state: 'ready', ready: true },
+      composer: {
+        state: 'ready',
+        ready: true,
+        primaryAction: this.state.generating ? 'stop' : 'voice',
+        hasDraft: false,
+      },
       activeRequest: active,
       boundLeaseProjection: active,
       turn: snapshot.assistant ? {

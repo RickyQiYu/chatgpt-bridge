@@ -8,6 +8,7 @@ import { RequestResultAccumulator } from './requestResultAccumulator.js';
 import { PassiveObservationRouter } from './passiveObservationRouter.js';
 import { RequestReattachmentCoordinator } from './requestReattachmentCoordinator.js';
 import { isRequestRuntimeFinished } from './requestRuntimeProjection.js';
+import { scheduleTerminalIdleLeaseRelease } from './terminalIdleLeaseRelease.js';
 import { publishDomCaptureSnapshot } from '../observation/domCaptureEvents.js';
 
 export function isCommandResponsePayload(payload = {}) {
@@ -46,6 +47,7 @@ export class BridgeClientEventRouter {
     registerObservedArtifacts,
     handleCommandResponse,
     sendCommand = null,
+    releaseStaleRequestLease = null,
   }) {
     this.pending = pending;
     this.commands = commands;
@@ -56,6 +58,7 @@ export class BridgeClientEventRouter {
     this.registerObservedArtifacts = registerObservedArtifacts;
     this.handleCommandResponse = handleCommandResponse;
     this.sendCommand = sendCommand;
+    this.releaseStaleRequestLease = typeof releaseStaleRequestLease === 'function' ? releaseStaleRequestLease : null;
     this.results = new RequestResultAccumulator();
     this.passive = new PassiveObservationRouter({
       eventBus,
@@ -472,6 +475,14 @@ handleClientActivity(clientId, client = null, payload = {}, envelope = null) {
     }
   }
   this.reattachment.handleClientActivity(clientId, client || {}, payload || {});
+  scheduleTerminalIdleLeaseRelease({
+    pending: this.pending,
+    releaseStaleRequestLease: this.releaseStaleRequestLease,
+    eventBus: this.eventBus,
+    clientId,
+    client: client || {},
+    observation,
+  });
 }
 
 

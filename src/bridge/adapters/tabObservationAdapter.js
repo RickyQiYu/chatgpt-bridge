@@ -86,6 +86,41 @@ function steerContinuationBoundaryMatches({
   return Boolean(originalUserTurnKey && observedUserTurnKey === originalUserTurnKey);
 }
 
+function unconfirmedPromptTerminalEvidence(observation = {}, currentState = null, clientId = '', requestId = '') {
+  const source = currentState?.source || {};
+  const request = observation.activeRequest || {};
+  const document = observation.document || {};
+  const composer = observation.composer || {};
+  const generation = String(observation.generation?.state || '');
+  const effects = currentState?.effect || {};
+  const exactLease = request.requestId === requestId
+    && Boolean(source.leaseId && source.ownerServerInstanceId)
+    && request.leaseId === source.leaseId
+    && request.ownerServerInstanceId === source.ownerServerInstanceId
+    && Number(request.responseEpoch) === Number(currentState?.response?.epoch || 0)
+    && source.clientId === clientId;
+  const exactConversation = !source.conversationId
+    || String(observation.conversationId || '') === String(source.conversationId || '');
+  return Boolean(
+    exactLease
+    && exactConversation
+    && currentState?.submission === SubmissionState.SUBMITTED
+    && ['submitted', 'awaiting_assistant'].includes(String(currentState.lifecycle || ''))
+    && !String(currentState.response?.userTurnKey || '').trim()
+    && !String(request.submittedUserTurnKey || '').trim()
+    && currentState.responseRetry?.status === 'idle'
+    && !effects.browser?.activeId
+    && !effects.coordinator?.activeId
+    && document.pageReady === true
+    && document.chatMainReady === true
+    && composer.ready === true
+    && ['send', 'voice'].includes(String(composer.primaryAction || ''))
+    && (composer.hasDraft === true || composer.hasDraft === false)
+    && ['idle', 'stopped'].includes(generation)
+    && Number(observation.stableForMs) >= 750
+  );
+}
+
 function terminalEvidence(observation, currentState, requestId, applies, submittedUserTurnKey = '') {
   const common = classifyTurnObservation(observation);
   const active = observation.activeRequest || null;
@@ -193,6 +228,7 @@ export function tabObservationToCanonicalEvent(
   const observationRevision = Number(observation.revision ?? payload.revision);
   const transportSequence = Number(envelope?.source?.sequence);
   const evidence = terminalEvidence(observation, currentState, requestId, responseAppliesToRequest, submittedUserTurnKey);
+  const unconfirmedPromptTerminal = unconfirmedPromptTerminalEvidence(observation, currentState, clientId, requestId);
   const artifacts = responseAppliesToRequest && Array.isArray(observation.artifacts)
     ? observation.artifacts
     : [];
@@ -249,6 +285,17 @@ export function tabObservationToCanonicalEvent(
     conversationCanonicalized,
     previousConversationId: conversationCanonicalized ? expectedConversationId : '',
     requestReplaced,
+    unconfirmedPromptTerminal,
+    ...(unconfirmedPromptTerminal ? {
+      recoveryMode: 'stale_lease',
+      composerAction: String(observation.composer?.primaryAction || ''),
+      message: observation.composer?.primaryAction === 'send'
+        || observation.composer?.hasDraft === true
+        ? 'ChatGPT kept the unconfirmed prompt in the composer; its draft is preserved until the Voice control returns'
+        : 'ChatGPT returned to the Voice idle control without a confirmed submitted user turn',
+      recoverable: true,
+      safeToRetryAsNewRequest: observation.composer?.primaryAction === 'voice' && observation.composer?.hasDraft === false,
+    } : {}),
     scopedToRequest: responseAppliesToRequest,
     leaseScopedToRequest: observationAppliesToRequest,
     responseBoundaryEstablished,

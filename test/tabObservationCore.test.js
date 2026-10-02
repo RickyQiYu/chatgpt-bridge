@@ -72,6 +72,35 @@ test('tab observation core treats a DOM streaming marker as active generation ev
   assert.equal(observation.output.state, 'streaming');
 });
 
+test('tab observation core preserves the primary composer action independently of generation', async () => {
+  const { value: core } = await loadGlobal(
+    'tools/chrome-bridge-extension/observation/tabObservationCore.js',
+    'ChatGptTabObservationCore',
+  );
+  const voice = core.normalizeTabObservation({
+    presence: { documentReadyState: 'complete', chatMainReady: true, composerReady: true, primaryComposerAction: 'voice' },
+    snapshot: { stopVisible: false, streamingVisible: false },
+  });
+  const send = core.normalizeTabObservation({
+    presence: { documentReadyState: 'complete', chatMainReady: true, composerReady: true, primaryComposerAction: 'send' },
+    snapshot: { stopVisible: false, streamingVisible: false },
+  });
+  const voiceWithDraft = core.normalizeTabObservation({
+    presence: { documentReadyState: 'complete', chatMainReady: true, composerReady: true, primaryComposerAction: 'voice', composerHasDraft: true },
+    snapshot: { stopVisible: false, streamingVisible: false },
+  });
+
+  assert.equal(voice.generation.state, 'idle');
+  assert.equal(voice.composer.primaryAction, 'voice');
+  assert.equal(send.generation.state, 'idle');
+  assert.equal(send.composer.primaryAction, 'send');
+  assert.equal(voiceWithDraft.composer.primaryAction, 'voice');
+  assert.equal(voiceWithDraft.composer.hasDraft, true);
+  assert.notEqual(core.signatureForObservation(voice), core.signatureForObservation(send));
+  assert.notEqual(core.signatureForResponseStability(voice), core.signatureForResponseStability(send));
+  assert.notEqual(core.signatureForObservation(voice), core.signatureForObservation(voiceWithDraft));
+});
+
 test('tab observation core keeps blockers and generation orthogonal', async () => {
   const { value: core } = await loadGlobal(
     'tools/chrome-bridge-extension/observation/tabObservationCore.js',

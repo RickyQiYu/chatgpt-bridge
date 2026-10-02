@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { getEventListeners } from 'node:events';
 import { BridgeCommandRegistry } from '../src/bridge/coordinator/bridgeCommandRegistry.js';
+import { HubCommandSender } from '../src/bridge/hub/commandSender.js';
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
@@ -77,5 +78,29 @@ test('duplicate command IDs cannot replace an outstanding command', async (t) =>
   respond('same-id');
   await rejected;
   await first;
+  assert.equal(sent.length, 1);
+});
+
+test('hub command sender marks a disappeared client as a definitive pre-dispatch failure', () => {
+  const sender = new HubCommandSender({ clients: new Map() });
+
+  assert.throws(
+    () => sender.send('tab-dropped', { type: 'request.release', requestId: 'request-1' }),
+    (error) => error.preDispatchRejected === true && error.code === 'BROWSER_CLIENT_NOT_FOUND',
+  );
+});
+
+test('hub command sender completes a successful write after recording its message ID', () => {
+  const sent = [];
+  const client = { id: 'tab-1', ws: { readyState: 1, send: (message) => sent.push(message) } };
+  const sender = new HubCommandSender({
+    clients: new Map([['tab-1', client]]),
+    protocol: { command: () => ({ messageId: 'message-1' }) },
+    serverInstanceId: 'server-1',
+    nextSequence: () => 1,
+    recordDebug() {},
+  });
+
+  assert.doesNotThrow(() => sender.send('tab-1', { type: 'models.list' }));
   assert.equal(sent.length, 1);
 });

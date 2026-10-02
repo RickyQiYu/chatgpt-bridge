@@ -2,9 +2,9 @@
 
 ## Current source candidates (not deployed)
 
-- Bridge package: `6.4.1`.
-- Extension manifest: `2.4.7`.
-- Content runtime: `4.4.7`.
+- Bridge package: `6.4.2`.
+- Extension manifest: `2.4.9`.
+- Content runtime: `4.4.9`.
 - Extension protocol: `5` only.
 - Background persistence schema: `6` only.
 - Workflow runtime schema: `3` only.
@@ -13,7 +13,7 @@
 
 These versions are source candidates in this checkout only. They are not deployed, and this handoff does not assert that they are installed in a live browser profile.
 
-Content runtime `4.4.7` recognizes keyed ChatGPT turns, distinguishes user-message search markers from assistant search content, and scopes completion controls to the matching turn. The unpacked extension still needs a manual Chrome reload before this can be confirmed live.
+Content runtime `4.4.9` reports the primary composer action and draft presence, then checks again before submitting a prompt. The Bridge requires a fresh, stable Voice-idle observation with an empty composer before releasing a stale request lease. Send, Voice with draft text, Stop, and unknown states keep the tab unavailable. The unpacked extension still needs a manual Chrome reload before this can be confirmed live.
 
 ## Historical session notes
 

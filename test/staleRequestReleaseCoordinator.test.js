@@ -35,6 +35,9 @@ function makeHarness(options = {}) {
       observerId: 'observer-1',
       revision: 7,
       observedAt: NOW - 100,
+      stableForMs: 900,
+      composer: { ready: true, primaryAction: 'voice', hasDraft: false },
+      document: { pageReady: true, chatMainReady: true },
       generation: { state: options.generationState || 'stopped' },
       activeRequest: tabProjection,
     },
@@ -202,6 +205,37 @@ test('rejects when active generation is reported', async () => {
   assert.equal(h.calls.length, 0);
 });
 
+test('requires a fresh Voice primary control before releasing a stale lease', async (t) => {
+  for (const primaryAction of ['send', 'stop', 'unknown', '']) {
+    await t.test(primaryAction || 'missing control', async () => {
+      const h = makeHarness({ client: { tabObservation: {
+        observerId: 'observer-1', revision: 7, observedAt: NOW - 100,
+        stableForMs: 900,
+        composer: { ready: true, primaryAction, hasDraft: false },
+        document: { pageReady: true, chatMainReady: true },
+        generation: { state: 'stopped' },
+        activeRequest: {
+          requestId: 'request-1', leaseId: 'lease-1', ownerServerInstanceId: 'server-current', responseEpoch: 2,
+        },
+      } } });
+      const outcome = await h.coordinator.releaseStaleRequestLease(h.releaseIdentity);
+      assert.equal(outcome.status, 'rejected');
+      assert.equal(h.calls.length, 0);
+    });
+  }
+  const voiceWithDraft = makeHarness({ client: { tabObservation: {
+    observerId: 'observer-1', revision: 7, observedAt: NOW - 100, stableForMs: 900,
+    composer: { ready: true, primaryAction: 'voice', hasDraft: true },
+    document: { pageReady: true, chatMainReady: true }, generation: { state: 'stopped' },
+    activeRequest: {
+      requestId: 'request-1', leaseId: 'lease-1', ownerServerInstanceId: 'server-current', responseEpoch: 2,
+    },
+  } } });
+  const voiceDraftOutcome = await voiceWithDraft.coordinator.releaseStaleRequestLease(voiceWithDraft.releaseIdentity);
+  assert.equal(voiceDraftOutcome.status, 'rejected');
+  assert.equal(voiceWithDraft.calls.length, 0);
+});
+
 test('rejects stale, future-dated, and malformed observations', async (t) => {
   const invalidObservations = [
     { observerId: 'observer-1', revision: 7, observedAt: NOW - FRESHNESS_MS - 1, generation: { state: 'idle' } },
@@ -308,8 +342,41 @@ test('returns ambiguous when the release command rejects and never retries', asy
   const h = makeHarness({ sendCommandResult: Promise.reject(new Error('timed out')) });
 
   const outcome = await h.coordinator.releaseStaleRequestLease(h.releaseIdentity);
+  const repeated = await h.coordinator.releaseStaleRequestLease(h.releaseIdentity);
 
   assert.equal(outcome.status, 'ambiguous');
+  assert.equal(repeated.status, 'rejected');
+  assert.equal(repeated.reason, 'release_already_attempted');
+  assert.equal(h.calls.length, 1);
+});
+
+test('a validated current observation may replace the stale cached tab observation for one release decision', async () => {
+  const h = makeHarness({ client: { tabObservation: {
+    observerId: 'observer-old', revision: 6, observedAt: NOW - 500,
+    composer: { ready: true, primaryAction: 'send' },
+    document: { pageReady: true, chatMainReady: true },
+    generation: { state: 'stopped' },
+    activeRequest: {
+      requestId: 'request-1', leaseId: 'lease-1', ownerServerInstanceId: 'server-current', responseEpoch: 2,
+    },
+  } } });
+  const clientSnapshot = {
+    ...h.client,
+    tabObservation: {
+      observerId: 'observer-new', revision: 8, observedAt: NOW - 20,
+      stableForMs: 900,
+      composer: { ready: true, primaryAction: 'voice', hasDraft: false },
+      document: { pageReady: true, chatMainReady: true },
+      generation: { state: 'stopped' },
+      activeRequest: {
+        requestId: 'request-1', leaseId: 'lease-1', ownerServerInstanceId: 'server-current', responseEpoch: 2,
+      },
+    },
+  };
+
+  const outcome = await h.coordinator.releaseStaleRequestLease(h.releaseIdentity, { clientSnapshot });
+
+  assert.equal(outcome.status, 'confirmed');
   assert.equal(h.calls.length, 1);
 });
 
@@ -325,4 +392,23 @@ test('returns rejected when the browser rejects a release before dispatch', asyn
   assert.equal(outcome.status, 'rejected');
   assert.equal(outcome.reason, 'release_rejected_before_dispatch');
   assert.equal(h.calls.length, 1);
+});
+
+test('retries exact cleanup after any definitive pre-dispatch failure', async () => {
+  const sendOptions = {
+    sendCommandError: Object.assign(new Error('client disconnected before command dispatch'), {
+      code: 'BROWSER_CLIENT_NOT_READY',
+      preDispatchRejected: true,
+    }),
+  };
+  const h = makeHarness(sendOptions);
+
+  const first = await h.coordinator.releaseStaleRequestLease(h.releaseIdentity);
+  sendOptions.sendCommandError = null;
+  const retry = await h.coordinator.releaseStaleRequestLease(h.releaseIdentity);
+
+  assert.equal(first.status, 'rejected');
+  assert.equal(first.reason, 'release_rejected_before_dispatch');
+  assert.equal(retry.status, 'confirmed');
+  assert.equal(h.calls.length, 2);
 });

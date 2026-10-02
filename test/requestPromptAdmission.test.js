@@ -15,9 +15,13 @@ const COMMAND_FILES = [
 ];
 const sources = await Promise.all(COMMAND_FILES.map((file) => fs.readFile(path.resolve(file), 'utf8')));
 
-function makeHarness({ anchor = null, requestKeyAfterAnchor = '', initialRequestKey = '' } = {}) {
+function makeHarness({ anchor = null, requestKeyAfterAnchor = '', initialRequestKey = '', primaryAction = 'voice', composerHasDraft = false } = {}) {
   const context = { console };
   context.globalThis = context;
+  context.ChatGptComposerCommands = {
+    readPrimaryComposerAction: () => primaryAction,
+    hasComposerDraft: () => composerHasDraft,
+  };
   vm.createContext(context);
   for (const source of sources) vm.runInContext(source, context);
 
@@ -35,6 +39,7 @@ function makeHarness({ anchor = null, requestKeyAfterAnchor = '', initialRequest
   let activeRequest = request;
   const errors = [];
   const effectResults = [];
+  const scheduledObservations = [];
   const turns = [{ key: 'user-existing' }];
   const commands = context.ChatGptRequestPromptCommands.createRequestPromptCommands({
     REQUEST_STATE: { createRequestState() { throw new Error('prompt continuation must retain its request state'); } },
@@ -65,7 +70,7 @@ function makeHarness({ anchor = null, requestKeyAfterAnchor = '', initialRequest
     },
     schedulePageStatus: () => {},
     schedulePassiveTurnScan: () => {},
-    scheduleTabObservation: () => {},
+    scheduleTabObservation: (...args) => { scheduledObservations.push(args); },
     send: () => {},
     setActiveRequest: (value) => { activeRequest = value; },
     setRequestPhase: (value, phase) => { value.phase = phase; },
@@ -102,6 +107,7 @@ function makeHarness({ anchor = null, requestKeyAfterAnchor = '', initialRequest
     request,
     errors,
     effectResults,
+    scheduledObservations,
     async submit() {
       await commands.handlePromptSend({
         type: 'prompt.send',
@@ -147,4 +153,25 @@ test('prompt submission admits the exact new user-turn key returned by ChatGPT',
   assert.equal(harness.errors.length, 0);
   assert.equal(harness.effectResults.length, 1);
   assert.equal(harness.effectResults[0]?.submittedUserTurnKey, 'user-new');
+});
+
+test('prompt submission preserves existing composer text and refuses non-Voice controls', async (t) => {
+  for (const primaryAction of ['send', 'stop', 'unknown']) {
+    await t.test(primaryAction, async () => {
+      const harness = makeHarness({ primaryAction, anchor: { key: 'user-new' }, requestKeyAfterAnchor: 'user-new' });
+      await harness.submit();
+
+      assert.equal(harness.errors.length, 1);
+      assert.equal(harness.errors[0]?.code, 'PROMPT_COMPOSER_NOT_IDLE');
+      assert.equal(harness.effectResults.length, 0);
+      assert.equal(harness.scheduledObservations[0]?.[0], 'prompt.submit.blocked_composer');
+    });
+  }
+  const voiceWithDraft = makeHarness({
+    primaryAction: 'voice', composerHasDraft: true,
+    anchor: { key: 'user-new' }, requestKeyAfterAnchor: 'user-new',
+  });
+  await voiceWithDraft.submit();
+  assert.equal(voiceWithDraft.errors[0]?.code, 'PROMPT_COMPOSER_NOT_IDLE');
+  assert.equal(voiceWithDraft.effectResults.length, 0);
 });

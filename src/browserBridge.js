@@ -140,6 +140,10 @@ export class BrowserBridge {
       registerObservedArtifacts: (artifacts, defaults) => this.registerObservedArtifacts(artifacts, defaults),
       handleCommandResponse: (clientId, payload) => this.#commandRegistry.handleResponse(clientId, payload),
       sendCommand: async (type, data, options) => await this.#sendCommand(type, data, options),
+      releaseStaleRequestLease: async (identity, clientSnapshot) => await this.#staleRequestRelease.releaseStaleRequestLease(
+        identity,
+        { clientSnapshot },
+      ),
     });
     const canonicalHandler = async ({ eventName, data }) => {
       if (eventName === 'client.message') return await this.#clientEvents.handleClientMessage(data.clientId, data.payload, data.envelope);
@@ -168,8 +172,8 @@ export class BrowserBridge {
     return this.#browserClients.activeRequestCandidates();
   }
 
-  async releaseStaleRequestLease(input) {
-    return await this.#staleRequestRelease.releaseStaleRequestLease(input);
+  async releaseStaleRequestLease(input, options = {}) {
+    return await this.#staleRequestRelease.releaseStaleRequestLease(input, options);
   }
 
   findActiveRequest(options = {}) {

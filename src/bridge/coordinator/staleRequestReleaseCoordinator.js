@@ -52,16 +52,29 @@ function validObservation(observation, now, freshnessMs) {
   const generation = typeof observation.generation === 'string'
     ? observation.generation
     : observation.generation?.state;
-  return generation === 'idle' || generation === 'stopped';
+  return generation === 'idle' || generation === 'stopped'
+    ? observation.composer?.ready === true
+      && observation.composer?.primaryAction === 'voice'
+      && observation.composer?.hasDraft === false
+      && observation.document?.chatMainReady === true
+      && observation.document?.pageReady === true
+      && Number(observation.stableForMs) >= 750
+    : false;
 }
 
 function rejected(reason) {
   return { status: 'rejected', reason };
 }
 
+function attemptKey(identity) {
+  return [identity.clientId, ...LEASE_IDENTITY_FIELDS.map((field) => String(identity[field] ?? ''))].join('\u001f');
+}
+
 /**
  * Performs one exact stale-lease cleanup after proving that the owning tab is
- * ready, still reports the same persisted lease, and has fresh idle evidence.
+ * ready, still reports the same persisted lease, and has a fresh Voice-idle
+ * composer observation. A stopped generation alone is insufficient because
+ * the composer may still contain an unsent draft.
  * It does not change canonical request state and never retries a release.
  */
 export class StaleRequestReleaseCoordinator {
@@ -93,12 +106,15 @@ export class StaleRequestReleaseCoordinator {
     this.observationFreshnessMs = Number.isFinite(freshness) && freshness > 0
       ? freshness
       : Number(config.clientStaleMs) || 30_000;
+    this.releaseAttempts = new Set();
   }
 
-  async releaseStaleRequestLease(input) {
+  async releaseStaleRequestLease(input, { clientSnapshot = null } = {}) {
     const identity = exactInputIdentity(input);
     if (!identity) return rejected('invalid_identity');
     if (!this.serverInstanceId) return rejected('server_instance_missing');
+    const releaseKey = attemptKey(identity);
+    if (this.releaseAttempts.has(releaseKey)) return rejected('release_already_attempted');
 
     let candidates;
     try {
@@ -115,7 +131,12 @@ export class StaleRequestReleaseCoordinator {
     }
 
     const candidate = clientCandidates[0];
-    const client = candidate?.client;
+    if (clientSnapshot && String(clientSnapshot.id || '') !== identity.clientId) {
+      return rejected('candidate_client_mismatch');
+    }
+    const client = clientSnapshot
+      ? { ...candidate?.client, ...clientSnapshot }
+      : candidate?.client;
     if (!client || client.id !== identity.clientId || client.ready !== true
       || client.compatible === false || client.compatibility?.compatible === false) {
       return rejected('client_not_ready_or_compatible');
@@ -168,6 +189,8 @@ export class StaleRequestReleaseCoordinator {
       ownerServerInstanceId: identity.ownerServerInstanceId,
       responseEpoch: identity.responseEpoch,
     };
+    if (this.releaseAttempts.size >= 500) this.releaseAttempts.delete(this.releaseAttempts.values().next().value);
+    this.releaseAttempts.add(releaseKey);
     try {
       const result = await this.sendCommand('request.release', {
         requestId: identity.requestId,
@@ -184,7 +207,8 @@ export class StaleRequestReleaseCoordinator {
       }
       return { status: 'ambiguous', reason: 'release_unconfirmed' };
     } catch (error) {
-      if (error?.preDispatchRejected === true && error?.code === 'BROWSER_TAB_QUARANTINED') {
+      if (error?.preDispatchRejected === true) {
+        this.releaseAttempts.delete(releaseKey);
         return rejected('release_rejected_before_dispatch');
       }
       return {

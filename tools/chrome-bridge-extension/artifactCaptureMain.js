@@ -292,7 +292,11 @@
     return true;
   }
 
-  function setText(element, text) {
+  function setText(element, text, expectedCurrentText = null) {
+    if (expectedCurrentText !== null
+        && comparableText(element) !== comparableText({ value: String(expectedCurrentText || '') })) {
+      return { ok: false, error: 'composer_changed_before_write', textLength: comparableText(element).length };
+    }
     const expected = String(text || '').trim();
     if (!selectAll(element)) throw new Error('Composer selection is unavailable');
     let execResult = false;
@@ -331,7 +335,14 @@
     try {
       const composer = findComposer();
       if (!composer) throw new Error('Composer is not available in the page main world');
-      result = { ...setText(composer, String(event.data.text || '')), tagName: String(composer.tagName || '') };
+      result = {
+        ...setText(
+          composer,
+          String(event.data.text || ''),
+          Object.hasOwn(event.data || {}, 'expectedCurrentText') ? String(event.data.expectedCurrentText || '') : null,
+        ),
+        tagName: String(composer.tagName || ''),
+      };
     } catch (error) {
       result = { ok: false, error: String(error?.message || error).slice(0, 200) };
     }
