@@ -228,6 +228,152 @@ test('prompt and steer submissions preserve a composer draft entered during setu
   assert.ok(Date.now() - steerStartedAt >= 780, 'steering waits 750ms after Voice returns');
 });
 
+test('prompt submission follows the live composer when ChatGPT replaces its DOM node', async () => {
+  const { sandbox } = await bootstrapExtensionContentRuntime();
+  sandbox.setTimeout = globalThis.setTimeout;
+  sandbox.clearTimeout = globalThis.clearTimeout;
+  const messageListeners = new Set();
+  sandbox.window.addEventListener = (type, listener) => {
+    if (type === 'message') messageListeners.add(listener);
+  };
+  sandbox.window.removeEventListener = (type, listener) => {
+    if (type === 'message') messageListeners.delete(listener);
+  };
+
+  const text = 'scheduled Planner wake';
+  const turns = [];
+  let currentComposer;
+  let originalComposer;
+  let action = 'voice';
+  let sendClicks = 0;
+  let nextMainWorldText = null;
+  const sendButton = {
+    disabled: false,
+    isConnected: true,
+    getAttribute(name) {
+      if (name === 'data-testid') return 'send-button';
+      if (name === 'aria-label') return 'Send prompt';
+      return null;
+    },
+    click() {
+      sendClicks += 1;
+      turns.push({ textContent: currentComposer.textContent });
+      currentComposer.textContent = '';
+      currentComposer.innerText = '';
+      action = 'voice';
+    },
+  };
+  const voiceButton = {
+    disabled: false,
+    isConnected: true,
+    getAttribute(name) {
+      if (name === 'data-testid') return 'composer-speech-button';
+      if (name === 'aria-label') return 'Start voice mode';
+      return null;
+    },
+  };
+  const form = {
+    nodeType: 1,
+    tagName: 'FORM',
+    isConnected: true,
+    matches() { return false; },
+    closest() { return null; },
+    querySelectorAll(selector) {
+      if (selector === 'button, [role="button"]') return [action === 'voice' ? voiceButton : sendButton];
+      if (selector.includes('send') || selector.includes('Send')) return action === 'send' ? [sendButton] : [];
+      if (selector.includes('composer-speech')) return action === 'voice' ? [voiceButton] : [];
+      return [];
+    },
+    contains(node) { return node === currentComposer || node === sendButton || node === voiceButton; },
+  };
+  const main = {
+    nodeType: 1,
+    tagName: 'MAIN',
+    isConnected: true,
+    contains(node) { return node === currentComposer || node === form || node === sendButton || node === voiceButton; },
+    querySelectorAll() { return []; },
+    closest() { return null; },
+    getAttribute() { return null; },
+  };
+  const makeComposer = (value = '') => ({
+    nodeType: 1,
+    tagName: 'DIV',
+    isContentEditable: true,
+    disabled: false,
+    readOnly: false,
+    isConnected: true,
+    parentElement: form,
+    textContent: value,
+    innerText: value,
+    focus() {},
+    getAttribute(name) {
+      if (name === 'id') return 'prompt-textarea';
+      if (name === 'contenteditable') return 'true';
+      return null;
+    },
+    closest(selector) { return selector === 'form' ? form : selector.includes('main') ? main : null; },
+    querySelectorAll() { return []; },
+  });
+  originalComposer = makeComposer();
+  currentComposer = originalComposer;
+  sandbox.document.querySelectorAll = (selector) => {
+    if (selector.includes('prompt-textarea') && selector.includes('contenteditable')) return [currentComposer];
+    if (selector === 'main, [role="main"]') return [main];
+    return [];
+  };
+  sandbox.window.postMessage = (payload) => {
+    if (payload?.source !== 'chatgpt-browser-bridge-composer-content-v1' || payload?.type !== 'composer.set') return;
+    originalComposer.textContent = text.slice(0, 12);
+    originalComposer.innerText = originalComposer.textContent;
+    originalComposer.isConnected = false;
+    currentComposer = makeComposer(nextMainWorldText ?? payload.text);
+    nextMainWorldText = null;
+    action = 'send';
+    const result = {
+      source: 'chatgpt-browser-bridge-composer-main-v1',
+      type: 'composer.set.result',
+      requestId: payload.requestId,
+      result: { ok: true, textLength: payload.text.length, tagName: 'DIV' },
+    };
+    for (const listener of messageListeners) listener({ source: sandbox.window, data: result });
+  };
+
+  const commands = sandbox.ChatGptComposerCommands.createComposerCommands(composerDependencies({
+    DOM_PARSER: sandbox.ChatGptDomParserCore,
+    getTurnNodes: () => turns,
+    turnRole: () => 'user',
+    visibleText: (node) => String(node?.textContent || ''),
+  }));
+  const evidence = await commands.enterPrompt(
+    text,
+    { requestId: 'composer-node-replaced', options: {} },
+    { kind: 'prompt' },
+  );
+
+  assert.equal(evidence.confirmed, true);
+  assert.equal(evidence.reason, 'new_user_turn');
+  assert.equal(turns.length, 1);
+  assert.equal(turns[0].textContent, text);
+  assert.equal(sendClicks, 1);
+  assert.equal(currentComposer.textContent, '');
+
+  nextMainWorldText = 'user-owned composer draft';
+  await assert.rejects(
+    commands.enterPrompt(
+      'a second scheduled wake',
+      { requestId: 'composer-node-replaced-user-draft', options: {} },
+      { kind: 'prompt' },
+    ),
+    (error) => {
+      assert.equal(error.code, 'PROMPT_COMPOSER_CHANGED_DURING_SUBMISSION');
+      assert.equal(error.provenNotExecuted, true);
+      return true;
+    },
+  );
+  assert.equal(currentComposer.textContent, 'user-owned composer draft');
+  assert.equal(sendClicks, 1, 'the replacement draft must not be submitted');
+});
+
 test('composer steering refuses to synthesize Enter while ChatGPT exposes only the stop control', async () => {
   const { sandbox } = await bootstrapExtensionContentRuntime();
   let submitCount = 0;

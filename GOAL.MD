@@ -48,7 +48,7 @@ The workflow v3 and Protocol 5 atomic-publication hard cut is implemented. Core 
 
 ## Verified in the current source tree
 
-- Candidate source versions are Bridge `6.4.2`, extension manifest `2.4.9`, and content runtime `4.4.9`. These values describe this checkout only; they are not deployed and do not assert a live installation.
+- Candidate source versions are Bridge `6.4.3`, extension manifest `2.4.10`, and content runtime `4.4.10`. These values describe this checkout only; they are not deployed and do not assert a live installation.
 - The extension protocol is `5` and workflow schema is `3`.
 - Protocol 5 has one shared manifest/validator and no payload-kind inference or Protocol 4 compatibility routing.
 - Effect-backed commands have one physical terminal lifecycle, and terminal state plus exact outbox envelope commit atomically.
