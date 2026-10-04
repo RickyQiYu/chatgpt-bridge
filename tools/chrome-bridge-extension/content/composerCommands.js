@@ -172,7 +172,7 @@ function restoreComposerText(element, value = '') {
 
 async function waitForSteerSubmitButton(request, timeoutMs = resolveSteerSubmitReadyTimeoutMs(request)) {
   const started = Date.now();
-  const target = findComposerRootStrict() || findChatMain() || document.body || document.documentElement;
+  const target = findChatMain() || findComposerRootStrict() || document.body || document.documentElement;
   let observer = null;
   let timer = null;
   let settled = false;
@@ -211,7 +211,7 @@ async function waitForSteerSubmitButton(request, timeoutMs = resolveSteerSubmitR
   };
   const inspect = () => {
     if (settled) return;
-    const roots = [findComposerRootStrict()].filter(Boolean);
+    const roots = primaryComposerControlRoots();
     const button = findSendButton(roots);
     const stopVisible = Boolean(findStopButton(roots));
     const responseFinalized = Boolean(!stopVisible && findRegenerateButton(finalizationControlRoots(request)));
@@ -285,7 +285,7 @@ async function waitForPromptSendButton(request, timeoutMs = 2_000) {
   const limit = Math.max(250, Number(timeoutMs) || 2_000);
   let lastDiagnosticAt = 0;
   while (Date.now() - started < limit) {
-    const button = findSendButton([findComposerRootStrict()].filter(Boolean));
+    const button = findSendButton(primaryComposerControlRoots());
     if (button) {
       diagnostic('prompt.submit.ready', {
         requestId: request?.requestId || '',
@@ -452,18 +452,18 @@ function submitComposer(composer, request, options = {}) {
   const kind = String(options.kind || 'prompt');
   const attempt = Number(options.attempt || 1);
   const liveComposer = findComposer() || composer;
-  const composerRoot = findComposerRootStrict();
+  const controlRoots = primaryComposerControlRoots();
   const expected = composerSubmissionText(options.expectedMessage);
   const actual = composerSubmissionText(composerTextValue(liveComposer));
   if (expected && actual !== expected) throw composerOwnershipError();
   if (kind !== 'steer') {
-    if (readPrimaryComposerAction([composerRoot].filter(Boolean)) !== 'send') {
+    if (readPrimaryComposerAction(controlRoots) !== 'send') {
       const error = new Error('PROMPT_COMPOSER_NOT_READY: ChatGPT did not expose the pending prompt as the Send action');
       error.code = 'PROMPT_COMPOSER_NOT_READY';
       error.provenNotExecuted = true;
       throw error;
     }
-  } else if (expected && readPrimaryComposerAction([composerRoot].filter(Boolean)) !== 'send') {
+  } else if (expected && readPrimaryComposerAction(controlRoots) !== 'send') {
     const error = new Error('STEER_SUBMIT_NOT_READY: ChatGPT did not expose the pending steer text as the Send action');
     error.code = 'STEER_SUBMIT_NOT_READY';
     error.retryable = true;
@@ -471,7 +471,7 @@ function submitComposer(composer, request, options = {}) {
     error.cancellationEvidence = { source: 'composer', reason: 'steer_send_control_missing' };
     throw error;
   }
-  const button = findSendButton([composerRoot].filter(Boolean)) || options.button;
+  const button = findSendButton(controlRoots) || options.button;
   if (button) {
     diagnostic('send_button.found', { requestId: request.requestId, kind, attempt, label: button.getAttribute('aria-label') || button.getAttribute('title') || button.getAttribute('data-testid') || '' });
     options.onSubmissionBoundary?.();
@@ -489,7 +489,7 @@ function submitComposer(composer, request, options = {}) {
     throw error;
   }
 
-  const form = composer.closest?.('form') || (composerRoot?.tagName === 'FORM' ? composerRoot : composerRoot?.closest?.('form')) || null;
+  const form = liveComposer.closest?.('form') || controlRoots.find((root) => root?.tagName === 'FORM') || null;
   if (form && typeof form.requestSubmit === 'function') {
     diagnostic('send_button.not_found_form_submit_fallback', { requestId: request.requestId, kind, attempt });
     options.onSubmissionBoundary?.();
@@ -883,6 +883,14 @@ function findComposerRootStrict() {
     || null;
 }
 
+function primaryComposerControlRoots() {
+  const roots = [];
+  const add = (root) => { if (root && !roots.includes(root)) roots.push(root); };
+  add(findComposerRootStrict());
+  add(findChatMain());
+  return roots;
+}
+
 function finalizationControlRoots(request, snapshot = {}) {
   const roots = [];
   const add = (node) => { if (node && !roots.includes(node)) roots.push(node); };
@@ -942,7 +950,7 @@ function findSendButton(roots = [document]) {
   }) || null;
 }
 
-function readPrimaryComposerAction(roots = [findComposerRootStrict()].filter(Boolean)) {
+function readPrimaryComposerAction(roots = primaryComposerControlRoots()) {
   const surfaces = Array.isArray(roots) ? roots.filter(Boolean) : [roots].filter(Boolean);
   if (!surfaces.length) return 'unknown';
   if (findStopButton(surfaces)) return 'stop';
