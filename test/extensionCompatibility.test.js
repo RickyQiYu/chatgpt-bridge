@@ -85,15 +85,15 @@ test('candidate package and extension versions match the next patch set', async 
   const content = await fs.readFile(path.join(root, 'content.js'), 'utf8');
   const contentVersion = content.match(/CONTENT_SCRIPT_VERSION = '([^']+)'/)?.[1] || '';
 
-  assert.equal(packageMetadata.version, '6.4.4');
-  assert.equal(packageLock.version, '6.4.4');
-  assert.equal(packageLock.packages[''].version, '6.4.4');
-  assert.equal(EXTENSION_COMPATIBILITY.minExtensionVersion, '2.4.11');
-  assert.equal(EXTENSION_COMPATIBILITY.recommendedExtensionVersion, '2.4.11');
-  assert.equal(EXTENSION_COMPATIBILITY.minContentVersion, '4.4.11');
-  assert.equal(manifest.version, '2.4.11');
-  assert.equal(manifest.version_name, '2.4.11');
-  assert.equal(contentVersion, '4.4.11');
+  assert.equal(packageMetadata.version, '6.4.5');
+  assert.equal(packageLock.version, '6.4.5');
+  assert.equal(packageLock.packages[''].version, '6.4.5');
+  assert.equal(EXTENSION_COMPATIBILITY.minExtensionVersion, '2.4.12');
+  assert.equal(EXTENSION_COMPATIBILITY.recommendedExtensionVersion, '2.4.12');
+  assert.equal(EXTENSION_COMPATIBILITY.minContentVersion, '4.4.12');
+  assert.equal(manifest.version, '2.4.12');
+  assert.equal(manifest.version_name, '2.4.12');
+  assert.equal(contentVersion, '4.4.12');
   assert.equal(manifest.version, EXTENSION_COMPATIBILITY.recommendedExtensionVersion);
   assert.equal(manifest.version, EXTENSION_COMPATIBILITY.minExtensionVersion);
   assert.equal(contentVersion, EXTENSION_COMPATIBILITY.minContentVersion);
