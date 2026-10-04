@@ -28,6 +28,21 @@
       return 0;
     }
 
+    function interactiveOnlyText(node) {
+      const text = normalizeText(visibleText(node));
+      if (!text) return false;
+      const controls = [];
+      if (node?.matches?.('button, [role="button"]')) controls.push(node);
+      controls.push(...Array.from(node?.querySelectorAll?.('button, [role="button"]') || []));
+      if (!controls.length) return false;
+      const controlText = normalizeText([...new Set(controls.map((control) => normalizeText(visibleText(control))).filter(Boolean))].join(' '));
+      return Boolean(controlText && controlText === text);
+    }
+
+    function hasResponseText(node) {
+      return Boolean(normalizeText(visibleText(node))) && !interactiveOnlyText(node);
+    }
+
     function currentAssistantNodeFromMarker(marker, turnContainer, userMarkers = []) {
       if (!marker) return null;
       let current = marker;
@@ -37,9 +52,9 @@
         if (userMarkers.some((userMarker) => parent === userMarker || parent.contains?.(userMarker))) break;
         const markerBranch = Array.from(parent.children || []).find((child) => child === current || child.contains?.(current)) || current;
         const siblings = Array.from(parent.children || []).filter((child) => child !== markerBranch);
-        if (siblings.some((sibling) => normalizeText(visibleText(sibling)))) return parent;
+        if (siblings.some(hasResponseText)) return parent;
         const directText = Array.from(parent.childNodes || []).some((child) => child.nodeType === Node.TEXT_NODE && normalizeText(child.textContent || ''));
-        if (directText) return parent;
+        if (directText && !interactiveOnlyText(parent)) return parent;
         current = parent;
         candidate = parent;
       }
