@@ -955,7 +955,7 @@ function readPrimaryComposerAction(roots = primaryComposerControlRoots()) {
   if (!surfaces.length) return 'unknown';
   if (findStopButton(surfaces)) return 'stop';
 
-  const voicePattern = /voice|microphone|\bmic\b|speech|dictat|голос|микрофон|音声|マイク/i;
+  const voicePattern = /voice|microphone|\bmic\b|speech|dictat|голос|микрофон|音声|マイク|语音|听写|麦克风/i;
   const sendPattern = /send[-_ ]?(button|message|prompt)?|submit|arrow-up|paper-airplane|отправ|послать|发送|送信/i;
   const buttons = scopedQueryAll(surfaces, 'button, [role="button"]')
     .filter((element) => isPrimaryChatSurfaceElement(element) && isUsableButton(element));

@@ -95,3 +95,14 @@ test('a submit-typed Voice control is classified as idle, not as Send', async ()
 
   assert.equal(commands.readPrimaryComposerAction([voiceSubmit]), 'voice');
 });
+
+test('primary composer action recognizes localized Chinese voice controls', async () => {
+  const commands = await loadComposerCommands();
+  const html = await fs.readFile(path.resolve('test/fixtures/chat-dom/composer-primary-actions.html'), 'utf8');
+  const cases = parseCapturedHtml(html).querySelectorAll('[data-case]');
+  const startVoice = cases.find((item) => item.getAttribute('data-case') === 'voice-zh-start');
+  const dictation = cases.find((item) => item.getAttribute('data-case') === 'voice-zh-dictation');
+
+  assert.equal(commands.readPrimaryComposerAction([startVoice]), 'voice');
+  assert.equal(commands.readPrimaryComposerAction([dictation]), 'voice');
+});

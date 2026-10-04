@@ -6,14 +6,14 @@ The workflow v3 and Protocol 5 hard cut is implemented in the current tree. Prot
 
 Candidate source versions for this checkout (not a deployment claim):
 
-- bridge package: `6.4.4`;
-- extension package: `2.4.11`;
-- content runtime: `4.4.11`;
+- bridge package: `6.4.5`;
+- extension package: `2.4.12`;
+- content runtime: `4.4.12`;
 - extension protocol: `5` only;
 - background runtime schema: `6` only;
 - workflow runtime schema: `3` only.
 
-These candidate versions describe source files in this checkout; they do not assert that the bundles have been deployed. The Bridge requests lease release only when an exact, fresh observation shows a stable Voice control, an empty composer, and idle/stopped generation. Stop remains busy; Send and Voice with a draft preserve the composer and block reuse; unknown controls fail closed. Bridge routing and the content executor both check this before writing a prompt. During asynchronous composer writes, the content executor follows the live composer node and accepts only the exact pending prompt or the original empty state; a different draft remains protected. Send/voice control lookup stays within the editor form and verified ChatGPT main surface. A terminal request without a confirmed user-turn boundary becomes recoverable uncertainty, and the Bridge defers physical release until Voice idle is observed. A liveness deadline may fail a silent request, but it does not click Stop. The extension background alone proves physical cleanup and emits `lease.released` after that proof. If dispatched cleanup remains ambiguous, the background quarantines the tab and emits `lease.quarantined`; ambiguous cleanup never makes the prompt eligible for replay. Content runtime `4.4.11` reports the primary composer action and draft presence separately from generation state.
+These candidate versions describe source files in this checkout; they do not assert that the bundles have been deployed. The Bridge requests lease release only when an exact, fresh observation shows a stable Voice control, an empty composer, and idle/stopped generation. Stop remains busy; Send and Voice with a draft preserve the composer and block reuse; unknown controls fail closed. Bridge routing and the content executor both check this before writing a prompt. During asynchronous composer writes, the content executor follows the live composer node and accepts only the exact pending prompt or the original empty state; a different draft remains protected. Send/voice control lookup stays within the editor form and verified ChatGPT main surface, including localized Chinese voice controls. A terminal request without a confirmed user-turn boundary becomes recoverable uncertainty, and the Bridge defers physical release until Voice idle is observed. A liveness deadline may fail a silent request, but it does not click Stop. The extension background alone proves physical cleanup and emits `lease.released` after that proof. If dispatched cleanup remains ambiguous, the background quarantines the tab and emits `lease.quarantined`; ambiguous cleanup never makes the prompt eligible for replay. Content runtime `4.4.12` reports the primary composer action and draft presence separately from generation state.
 
 Authenticated live-browser verification remains a release activity. A new ChatGPT DOM variant may require parser or executor adapter changes, but it must remain a local typed effect outcome and must not create another protocol classifier, lifecycle, terminal publisher, or release path.
 
