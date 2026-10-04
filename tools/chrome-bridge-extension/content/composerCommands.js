@@ -364,6 +364,7 @@ async function enterPrompt(message, request, options = {}) {
       expectedCurrentText: composerBeforeText,
     });
     preparedSubmitButton = prepared?.button || null;
+    composer = prepared?.composer || findComposer() || composer;
     composerWriteCompleted = true;
     diagnostic('composer.filled', { requestId: request.requestId, kind, length: message.length });
   } else {
@@ -371,11 +372,13 @@ async function enterPrompt(message, request, options = {}) {
   }
 
   await delay(160);
+  composer = findComposer() || composer;
   let method = '';
   let evidenceWaiter = null;
   try {
     if (kind === 'steer') {
       const ready = await waitForSteerSubmitButton(request);
+      composer = findComposer() || composer;
       evidenceWaiter = createPromptSubmissionEvidenceWaiter(request, baselineTurnKeys, message, composer, ackTimeoutMs, evidenceOptions);
       method = submitComposer(composer, request, { kind, attempt: 1, button: ready.button, expectedMessage: message });
     } else {
@@ -389,6 +392,7 @@ async function enterPrompt(message, request, options = {}) {
       // a fresh control immediately before the click and only use the earlier
       // reference as a bounded fallback.
       const readyButton = await waitForPromptSendButton(request, 1_000) || preparedSubmitButton;
+      composer = findComposer() || composer;
       method = submitComposer(composer, request, {
         kind,
         attempt: 1,
@@ -447,9 +451,10 @@ async function enterPrompt(message, request, options = {}) {
 function submitComposer(composer, request, options = {}) {
   const kind = String(options.kind || 'prompt');
   const attempt = Number(options.attempt || 1);
+  const liveComposer = findComposer() || composer;
   const composerRoot = findComposerRootStrict();
   const expected = composerSubmissionText(options.expectedMessage);
-  const actual = composerSubmissionText(composerTextValue(composer));
+  const actual = composerSubmissionText(composerTextValue(liveComposer));
   if (expected && actual !== expected) throw composerOwnershipError();
   if (kind !== 'steer') {
     if (readPrimaryComposerAction([composerRoot].filter(Boolean)) !== 'send') {
@@ -569,21 +574,32 @@ function findComposer() {
 async function focusAndSetComposerText(element, text, request, options = {}) {
   const originalText = composerSubmissionText(options.expectedCurrentText ?? composerTextValue(element));
   const expectedText = composerSubmissionText(text);
+  let activeElement = element;
+  const liveComposer = () => {
+    const current = findComposer();
+    if (current) activeElement = current;
+    return activeElement;
+  };
   const assertComposerStillOwned = () => {
-    const actualText = composerSubmissionText(composerTextValue(element));
+    const current = liveComposer();
+    const actualText = composerSubmissionText(composerTextValue(current));
     if (actualText !== originalText && actualText !== expectedText) throw composerOwnershipError();
+    return current;
   };
 
-  element.focus();
+  liveComposer().focus();
   await delay(20);
   assertComposerStillOwned();
 
   const attempts = [
-    { name: 'page_main', apply: () => setComposerTextByPageMain(element, text, request, { expectedCurrentText: composerTextValue(element) }) },
-    { name: 'paste', apply: () => setComposerTextByPaste(element, text) },
-    { name: 'exec_command', apply: () => setComposerTextByExecCommand(element, text) },
-    { name: 'text_content', apply: () => setComposerTextByTextContent(element, text) },
-    { name: 'native_value', apply: () => setComposerTextByNativeValue(element, text) },
+    { name: 'page_main', apply: () => {
+      const current = liveComposer();
+      return setComposerTextByPageMain(current, text, request, { expectedCurrentText: composerTextValue(current) });
+    } },
+    { name: 'paste', apply: () => setComposerTextByPaste(liveComposer(), text) },
+    { name: 'exec_command', apply: () => setComposerTextByExecCommand(liveComposer(), text) },
+    { name: 'text_content', apply: () => setComposerTextByTextContent(liveComposer(), text) },
+    { name: 'native_value', apply: () => setComposerTextByNativeValue(liveComposer(), text) },
   ];
 
   for (let i = 0; i < attempts.length; i += 1) {
@@ -600,7 +616,28 @@ async function focusAndSetComposerText(element, text, request, options = {}) {
       continue;
     }
     if (result && result.ok === false) {
-      if (String(result.error || '') === 'composer_changed_before_write') throw composerOwnershipError();
+      if (String(result.error || '') === 'composer_changed_before_write') {
+        const current = assertComposerStillOwned();
+        const currentText = composerSubmissionText(composerTextValue(current));
+        if (currentText === expectedText) {
+          const button = await waitForPromptSendButton(request, options.requireSendReady === false ? 250 : 900);
+          const live = assertComposerStillOwned();
+          if (button || options.requireSendReady === false) {
+            diagnostic('composer.text_verified', {
+              requestId: request.requestId, method: attempt.name, length: text.length, sendReady: Boolean(button),
+            });
+            return { button: button || null, method: attempt.name, composer: live };
+          }
+        } else if (currentText !== originalText) {
+          throw composerOwnershipError();
+        }
+        diagnostic('composer.text_method_failed', {
+          requestId: request.requestId,
+          method: attempt.name,
+          message: 'page main world observed a replaced composer before write',
+        });
+        continue;
+      }
       diagnostic('composer.text_method_failed', {
         requestId: request.requestId,
         method: attempt.name,
@@ -609,15 +646,15 @@ async function focusAndSetComposerText(element, text, request, options = {}) {
       continue;
     }
     await delay(80);
-    assertComposerStillOwned();
-    if (composerContainsText(element, text)) {
+    let current = assertComposerStillOwned();
+    if (composerContainsText(current, text)) {
       const button = await waitForPromptSendButton(request, options.requireSendReady === false ? 250 : 900);
-      assertComposerStillOwned();
+      current = assertComposerStillOwned();
       if (button || options.requireSendReady === false) {
         diagnostic('composer.text_verified', {
           requestId: request.requestId, method: attempt.name, length: text.length, sendReady: Boolean(button),
         });
-        return { button: button || null, method: attempt.name };
+        return { button: button || null, method: attempt.name, composer: current };
       }
       diagnostic('composer.text_not_submit_ready', {
         requestId: request.requestId, method: attempt.name, length: text.length, sendReady: false,
@@ -628,15 +665,15 @@ async function focusAndSetComposerText(element, text, request, options = {}) {
         error.provenNotExecuted = true;
         throw error;
       }
-      assertComposerStillOwned();
-      clearComposerElement(element);
+      current = assertComposerStillOwned();
+      clearComposerElement(current);
     }
   }
 
   diagnostic('composer.text_verify_failed', {
     requestId: request.requestId,
     expectedLength: text.length,
-    actualLength: visibleText(element).length,
+    actualLength: visibleText(liveComposer()).length,
     reason: 'send_control_not_ready_after_bounded_setter_attempts',
   });
   throw new Error('COMPOSER_TEXT_VERIFY_FAILED: ChatGPT did not expose an enabled send control after bounded composer input attempts');
