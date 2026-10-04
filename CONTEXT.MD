@@ -6,16 +6,16 @@ This project exposes HTTP, OpenAI-compatible, RPC, workflow, and Terlio.js inter
 
 Candidate source versions for this checkout (not a deployment claim):
 
-- bridge package: `6.4.5`;
-- extension: `2.4.12`;
-- content runtime: `4.4.12`;
+- bridge package: `6.4.6`;
+- extension: `2.4.13`;
+- content runtime: `4.4.13`;
 - extension protocol: `5` only;
 - background runtime schema: `6` only;
 - WebSocket endpoint: `/extension/ws`.
 
 No polling, page-context WebSocket, userscript transport, protocol downgrade, alternate request lifecycle, job API, or alternate interactive runtime remains.
 
-These candidate versions describe source files in this checkout; they do not assert that the bundles have been deployed. The Bridge releases a terminal request lease only after an exact, fresh observation shows stable Voice idle with an empty composer. Stop means generation is active; Send means an unsent draft remains and the tab stays unavailable; Voice with draft text and unknown controls also fail closed. Bridge routing and the content executor both check this before writing a prompt. During asynchronous composer writes, the content executor follows the live DOM node and accepts only the exact pending prompt or the original empty state; a different draft remains protected. Send/voice control lookup is scoped to the editor form and verified ChatGPT main surface, including localized Chinese voice controls. A request with no confirmed user-turn boundary becomes recoverable uncertainty, while the composer draft is preserved. A liveness deadline may fail a silent request, but it never clicks Stop. The extension background alone proves physical cleanup and emits `lease.released` after that proof. If dispatched cleanup remains ambiguous, the background quarantines the tab and emits `lease.quarantined`; ambiguous cleanup never makes the prompt eligible for replay.
+These candidate versions describe source files in this checkout; they do not assert that the bundles have been deployed. The Bridge releases a terminal request lease only after an exact, fresh observation shows stable Voice idle with an empty composer. Stop means generation is active; Send means an unsent draft remains and the tab stays unavailable; Voice with draft text and unknown controls also fail closed. Bridge routing and the content executor both check this before writing a prompt. During asynchronous composer writes, the content executor follows the live DOM node and accepts only the exact pending prompt or the original empty state; a different draft remains protected. Send/voice control lookup is scoped to the editor form and verified ChatGPT main surface, including localized Chinese voice controls. The main-world composer setter compares whitespace-normalized text on both sides, and its fallback replaces all partial editor blocks so a multiline prompt cannot leave duplicate text. A request with no confirmed user-turn boundary becomes recoverable uncertainty, while the composer draft is preserved. A liveness deadline may fail a silent request, but it never clicks Stop. The extension background alone proves physical cleanup and emits `lease.released` after that proof. If dispatched cleanup remains ambiguous, the background quarantines the tab and emits `lease.quarantined`; ambiguous cleanup never makes the prompt eligible for replay.
 
 ## Request and storage failure boundaries
 
