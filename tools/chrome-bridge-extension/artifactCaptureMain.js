@@ -304,8 +304,7 @@
       execResult = Boolean(document.execCommand('insertText', false, text));
     }
     let actual = comparableText(element);
-    const expectedPrefix = expected.slice(0, Math.min(expected.length, 200));
-    if (!actual.includes(expectedPrefix)) {
+    if (actual !== expected) {
       if (element.tagName === 'TEXTAREA' || element.tagName === 'INPUT') {
         const proto = element.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
         const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
@@ -321,7 +320,7 @@
       actual = comparableText(element);
     }
     return {
-      ok: Boolean(expected ? actual.includes(expectedPrefix) : true),
+      ok: actual === expected,
       execResult,
       textLength: actual.length,
       childCount: Number(element.children?.length || 0),

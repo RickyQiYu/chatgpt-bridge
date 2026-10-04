@@ -221,10 +221,10 @@ test('MAIN-world composer setter verifies multiline wake prompts after whitespac
 
 test('MAIN-world composer fallback replaces partial editor blocks instead of duplicating the prompt', async () => {
   const harness = await loadHarness();
-  const text = '[scheduled-wake-v2]\nproject=example/project\n\nPerform a cold refresh.';
+  const text = `[scheduled-wake-v2]\nproject=example/project\n\nPerform a cold refresh. ${'x'.repeat(260)}`;
   const composer = makeEditableComposer();
-  configureComposerHarness(harness, composer, (_value, target) => {
-    target.replaceChildren(makeComposerParagraph('partial'), makeComposerParagraph('leftover block'));
+  configureComposerHarness(harness, composer, (value, target) => {
+    target.replaceChildren(makeComposerParagraph(value.slice(0, 220)), makeComposerParagraph('leftover block'));
     return true;
   });
 
