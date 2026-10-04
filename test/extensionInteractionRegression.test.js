@@ -374,6 +374,86 @@ test('prompt submission follows the live composer when ChatGPT replaces its DOM 
   assert.equal(sendClicks, 1, 'the replacement draft must not be submitted');
 });
 
+test('primary composer controls remain discoverable outside a strict editor form', async () => {
+  const { sandbox } = await bootstrapExtensionContentRuntime();
+  let action = 'voice';
+  const voiceButton = {
+    disabled: false,
+    isConnected: true,
+    getAttribute(name) {
+      if (name === 'data-testid') return 'composer-speech-button';
+      if (name === 'aria-label') return 'Start voice mode';
+      return null;
+    },
+  };
+  const sendButton = {
+    disabled: false,
+    isConnected: true,
+    getAttribute(name) {
+      if (name === 'data-testid') return 'send-button';
+      if (name === 'aria-label') return 'Send prompt';
+      return null;
+    },
+  };
+  const form = {
+    nodeType: 1,
+    tagName: 'FORM',
+    isConnected: true,
+    contains(node) { return node === composer; },
+    querySelectorAll() { return []; },
+  };
+  const composer = {
+    nodeType: 1,
+    tagName: 'DIV',
+    isContentEditable: true,
+    isConnected: true,
+    disabled: false,
+    readOnly: false,
+    textContent: '',
+    innerText: '',
+    parentElement: form,
+    getAttribute(name) {
+      if (name === 'id') return 'prompt-textarea';
+      if (name === 'contenteditable') return 'true';
+      return null;
+    },
+    closest(selector) {
+      if (selector === 'form') return form;
+      if (selector.includes('main')) return main;
+      return null;
+    },
+    querySelectorAll() { return []; },
+  };
+  const main = {
+    nodeType: 1,
+    tagName: 'MAIN',
+    isConnected: true,
+    contains(node) { return node === composer || node === form || node === voiceButton || node === sendButton; },
+    querySelectorAll(selector) {
+      if (selector === 'button, [role="button"]') return [action === 'voice' ? voiceButton : sendButton];
+      if (selector.includes('send') || selector.includes('Send')) return action === 'send' ? [sendButton] : [];
+      if (selector.includes('composer-speech')) return action === 'voice' ? [voiceButton] : [];
+      return [];
+    },
+    closest() { return null; },
+  };
+  sandbox.document.querySelectorAll = (selector) => {
+    if (selector === 'main, [role="main"]') return [main];
+    if (selector.includes('#prompt-textarea[contenteditable]')) return [composer];
+    return [];
+  };
+
+  const commands = sandbox.ChatGptComposerCommands.createComposerCommands(composerDependencies({
+    DOM_PARSER: sandbox.ChatGptDomParserCore,
+  }));
+  assert.equal(commands.findComposerRootStrict(), form);
+  assert.equal(commands.readPrimaryComposerAction(), 'voice');
+
+  action = 'send';
+  assert.equal(commands.readPrimaryComposerAction(), 'send');
+  assert.equal(await commands.waitForPromptSendButton({ requestId: 'control-outside-form' }, 250), sendButton);
+});
+
 test('composer steering refuses to synthesize Enter while ChatGPT exposes only the stop control', async () => {
   const { sandbox } = await bootstrapExtensionContentRuntime();
   let submitCount = 0;
