@@ -297,31 +297,31 @@
         && comparableText(element) !== comparableText({ value: String(expectedCurrentText || '') })) {
       return { ok: false, error: 'composer_changed_before_write', textLength: comparableText(element).length };
     }
-    const expected = String(text || '').trim();
+    const expected = comparableText({ value: String(text || '') });
     if (!selectAll(element)) throw new Error('Composer selection is unavailable');
     let execResult = false;
     if (typeof document.execCommand === 'function') {
       execResult = Boolean(document.execCommand('insertText', false, text));
     }
     let actual = comparableText(element);
-    if (!actual.includes(expected.slice(0, Math.min(expected.length, 200)))) {
+    const expectedPrefix = expected.slice(0, Math.min(expected.length, 200));
+    if (!actual.includes(expectedPrefix)) {
       if (element.tagName === 'TEXTAREA' || element.tagName === 'INPUT') {
         const proto = element.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
         const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
         descriptor?.set?.call(element, text);
       } else {
-        let paragraph = element.querySelector?.('p');
-        if (!paragraph) {
-          paragraph = document.createElement('p');
-          element.replaceChildren(paragraph);
-        }
+        // A failed execCommand can still leave partial blocks in ProseMirror.
+        // Replace the whole editor tree so fallback text cannot duplicate them.
+        const paragraph = document.createElement('p');
         paragraph.textContent = text;
+        element.replaceChildren(paragraph);
       }
       element.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
       actual = comparableText(element);
     }
     return {
-      ok: Boolean(expected ? actual.includes(expected.slice(0, Math.min(expected.length, 200))) : true),
+      ok: Boolean(expected ? actual.includes(expectedPrefix) : true),
       execResult,
       textLength: actual.length,
       childCount: Number(element.children?.length || 0),

@@ -2,9 +2,9 @@
 
 ## Current source candidates (not deployed)
 
-- Bridge package: `6.4.5`.
-- Extension manifest: `2.4.12`.
-- Content runtime: `4.4.12`.
+- Bridge package: `6.4.6`.
+- Extension manifest: `2.4.13`.
+- Content runtime: `4.4.13`.
 - Extension protocol: `5` only.
 - Background persistence schema: `6` only.
 - Workflow runtime schema: `3` only.
@@ -13,9 +13,9 @@
 
 These versions are source candidates in this checkout only. They are not deployed, and this handoff does not assert that they are installed in a live browser profile.
 
-Content runtime `4.4.12` reports the primary composer action and draft presence, then checks again before submitting a prompt. During asynchronous writes it follows the live composer node if ChatGPT replaces the DOM element. It accepts only the exact pending prompt or the original empty state; a different draft remains protected. Send/voice control lookup is scoped to the editor form and verified ChatGPT main surface, including localized Chinese voice controls. The Bridge requires a fresh, stable Voice-idle observation with an empty composer before releasing a stale request lease. Send, Voice with draft text, Stop, and unknown states keep the tab unavailable. This source candidate is not deployed yet.
+Content runtime `4.4.13` reports the primary composer action and draft presence, then checks again before submitting a prompt. During asynchronous writes it follows the live composer node if ChatGPT replaces the DOM element. It accepts only the exact pending prompt or the original empty state; a different draft remains protected. Send/voice control lookup is scoped to the editor form and verified ChatGPT main surface, including localized Chinese voice controls. The MAIN-world setter compares whitespace-normalized values and clears partial editor blocks in its fallback, preventing multiline scheduled prompts from being duplicated. The Bridge requires a fresh, stable Voice-idle observation with an empty composer before releasing a stale request lease. Send, Voice with draft text, Stop, and unknown states keep the tab unavailable. This source candidate is not deployed yet.
 
-The `6.4.5` source candidate includes regression tests for composer DOM replacement send/voice controls outside the editor form, and localized Chinese voice labels. `npm test` passes (1,419 passed, 2 skipped); `npm run check` passes. `npm run check:quality` exits successfully with the repository's 11 over-target line-count warnings (all below the hard limit). The mock E2E bootstrap still fails with `Browser extension client ... is busy with another local request`; the same failure reproduces unchanged from this PR base `e64101bbfb3151909dac9c45a17261d489fc16f2`. No live source or extension deployment has been performed from this candidate.
+The `6.4.6` source candidate adds regressions for multiline prompt verification and partial ProseMirror block replacement, alongside the existing composer DOM replacement and send/voice-control coverage. `npm test` passes (1,421 passed, 2 skipped); `npm run check` passes. `npm run check:quality` exits successfully with the repository's 11 over-target line-count warnings (all below the hard limit). The mock E2E bootstrap still fails with `Browser extension client ... is busy with another local request`; the same failure reproduces unchanged from this PR base `cec355042ca169c4c8a1dbcf3765757bed9054f3`. No live source or extension deployment has been performed from this candidate.
 
 ## Historical session notes
 

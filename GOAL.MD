@@ -48,13 +48,14 @@ The workflow v3 and Protocol 5 atomic-publication hard cut is implemented. Core 
 
 ## Verified in the current source tree
 
-- Candidate source versions are Bridge `6.4.5`, extension manifest `2.4.12`, and content runtime `4.4.12`. These values describe this checkout only; they are not deployed and do not assert a live installation.
+- Candidate source versions are Bridge `6.4.6`, extension manifest `2.4.13`, and content runtime `4.4.13`. These values describe this checkout only; they are not deployed and do not assert a live installation.
 - The extension protocol is `5` and workflow schema is `3`.
 - Protocol 5 has one shared manifest/validator and no payload-kind inference or Protocol 4 compatibility routing.
 - Effect-backed commands have one physical terminal lifecycle, and terminal state plus exact outbox envelope commit atomically.
 - Background owns release; unproved cleanup quarantines the tab instead of blocking unrelated work.
 - A disconnected content runtime is dormant: no DOM observer, polling, history/navigation hook, floating page panel, or page-world media/download interception remains active. Artifact page hooks are temporary and exact-capture scoped.
 - Direct content request-projection mutation is source-tested and rejected at runtime.
+- Multiline composer text is verified after whitespace normalization; the fallback replaces partial editor blocks instead of leaving a duplicated wake prompt.
 - Fragmented content terminal/answer/thinking/artifact lifecycle messages are absent.
 - Unconfirmed prompt submission is attempted once and becomes `uncertain`; it is never automatically resubmitted.
 - Standalone browser commands receive durable command records without a request lease; only canonical request commands can claim `TabLease`. Every standalone write has a tested reload policy: registered-but-undispatched becomes `proved_not_started`; dispatched work requires proof from observation, read probe, content epoch, download capture, or maintenance state, otherwise typed uncertainty without replay.

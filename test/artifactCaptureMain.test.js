@@ -79,6 +79,63 @@ async function loadHarness() {
   return harness;
 }
 
+function makeComposerParagraph(value = '') {
+  let text = String(value);
+  return {
+    tagName: 'P',
+    get textContent() { return text; },
+    set textContent(value) { text = String(value); },
+    get innerText() { return text; },
+    set innerText(value) { text = String(value); },
+  };
+}
+
+function makeEditableComposer(paragraphs = ['']) {
+  const composer = {
+    tagName: 'DIV',
+    isContentEditable: true,
+    disabled: false,
+    readOnly: false,
+    children: paragraphs.map(makeComposerParagraph),
+    getAttribute(name) {
+      if (name === 'contenteditable') return 'true';
+      if (name === 'id') return 'prompt-textarea';
+      return null;
+    },
+    getClientRects() { return [{}]; },
+    focus() {},
+    querySelector(selector) { return selector === 'p' ? this.children[0] || null : null; },
+    replaceChildren(...children) { this.children = children; },
+    dispatchEvent() { return true; },
+    get innerText() { return this.children.map((child) => child.innerText).join('\n'); },
+    get textContent() { return this.children.map((child) => child.textContent).join(''); },
+  };
+  return composer;
+}
+
+function configureComposerHarness(harness, composer, insertText) {
+  harness.document.querySelectorAll = () => [composer];
+  harness.document.createElement = (tagName) => tagName === 'p' ? makeComposerParagraph() : { tagName: String(tagName).toUpperCase() };
+  harness.document.createRange = () => ({ selectNodeContents() {} });
+  harness.window.getSelection = () => ({ removeAllRanges() {}, addRange() {} });
+  harness.window.getComputedStyle = () => ({ display: 'block', visibility: 'visible', opacity: '1' });
+  harness.context.InputEvent = class InputEvent {
+    constructor(type, options = {}) { this.type = type; Object.assign(this, options); }
+  };
+  harness.document.execCommand = (command, _showUi, text) => {
+    if (command === 'delete') {
+      composer.replaceChildren(makeComposerParagraph());
+      return true;
+    }
+    if (command === 'insertText') return insertText(String(text), composer);
+    return false;
+  };
+}
+
+function normalizeComposerText(value) {
+  return String(value || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
 test('main-world artifact bridge leaves Blob URLs, clicks, and window.open untouched while no capture is armed', async () => {
   const harness = await loadHarness();
   const { context, originals } = harness;
@@ -138,6 +195,51 @@ test('MAIN-world composer protocol matches the content sender and preserves a ne
   const result = harness.messages.find((message) => message.source === expectedReplySource && message.type === 'composer.set.result');
   assert.equal(result?.result?.ok, false, JSON.stringify(harness.messages));
   assert.equal(result?.result?.error, 'composer_changed_before_write');
+});
+
+test('MAIN-world composer setter verifies multiline wake prompts after whitespace normalization', async () => {
+  const harness = await loadHarness();
+  const text = '[scheduled-wake-v2]\nproject=example/project\nwake_sequence=9\n\nPerform a cold refresh.\nContinue the planner work.';
+  const composer = makeEditableComposer();
+  configureComposerHarness(harness, composer, (value, target) => {
+    target.replaceChildren(...value.split('\n').map(makeComposerParagraph));
+    return true;
+  });
+
+  harness.window.postMessage({
+    source: 'chatgpt-browser-bridge-composer-content-v1',
+    type: 'composer.set',
+    requestId: 'multiline-wake',
+    expectedCurrentText: '',
+    text,
+  });
+
+  const result = harness.messages.find((message) => message.source === 'chatgpt-browser-bridge-composer-main-v1' && message.type === 'composer.set.result');
+  assert.equal(result?.result?.ok, true, JSON.stringify(result));
+  assert.equal(normalizeComposerText(composer.innerText), normalizeComposerText(text));
+});
+
+test('MAIN-world composer fallback replaces partial editor blocks instead of duplicating the prompt', async () => {
+  const harness = await loadHarness();
+  const text = '[scheduled-wake-v2]\nproject=example/project\n\nPerform a cold refresh.';
+  const composer = makeEditableComposer();
+  configureComposerHarness(harness, composer, (_value, target) => {
+    target.replaceChildren(makeComposerParagraph('partial'), makeComposerParagraph('leftover block'));
+    return true;
+  });
+
+  harness.window.postMessage({
+    source: 'chatgpt-browser-bridge-composer-content-v1',
+    type: 'composer.set',
+    requestId: 'multiline-fallback',
+    expectedCurrentText: '',
+    text,
+  });
+
+  const result = harness.messages.find((message) => message.source === 'chatgpt-browser-bridge-composer-main-v1' && message.type === 'composer.set.result');
+  assert.equal(result?.result?.ok, true, JSON.stringify(result));
+  assert.equal(composer.children.length, 1);
+  assert.equal(normalizeComposerText(composer.innerText), normalizeComposerText(text));
 });
 
 test('armed artifact capture returns generated Blob bytes, suppresses only the matched download, then restores page APIs', async () => {
