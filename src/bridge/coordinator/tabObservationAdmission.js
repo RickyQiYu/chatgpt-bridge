@@ -1,11 +1,12 @@
 import { config } from '../../config.js';
 
 export class TabObservationAdmission {
-  constructor({ hub, sendCommand, releaseCoordinator = null, pendingUsesClient }) {
+  constructor({ hub, sendCommand, releaseCoordinator = null, pendingUsesClient, hasPendingCommandForClient = () => false }) {
     this.hub = hub;
     this.sendCommand = sendCommand;
     this.releaseCoordinator = releaseCoordinator;
     this.pendingUsesClient = pendingUsesClient;
+    this.hasPendingCommandForClient = hasPendingCommandForClient;
   }
 
   hasFreshTabObservation(client = {}) {
@@ -31,6 +32,31 @@ export class TabObservationAdmission {
     );
   }
 
+  canWaitForComposerStability(client = {}, state = {}) {
+    const observation = client.tabObservation || {};
+    const clientId = String(client.id || '');
+    return Boolean(
+      clientId
+      && client.ready
+      && client.compatible !== false
+      && client.compatibility?.compatible !== false
+      && !client.quarantined
+      && !client.activeRequest?.requestId
+      && !observation.activeRequest?.requestId
+      && !this.releaseCoordinator?.isReleasePending?.(clientId)
+      && !this.pendingUsesClient(clientId, state.requestId || '')
+      && !this.hasPendingCommandForClient(clientId)
+      && this.hasFreshTabObservation(client)
+      && Number(observation.stableForMs || 0) < 750
+      && observation.document?.pageReady === true
+      && observation.document?.chatMainReady === true
+      && observation.composer?.ready === true
+      && observation.composer?.primaryAction === 'voice'
+      && observation.composer?.hasDraft === false
+      && ['idle', 'stopped'].includes(String(observation.generation?.state || ''))
+    );
+  }
+
   async refreshStaleTabObservation(client = {}, state = {}) {
     if (!String(client.runtime || client.transport || '').trim()) return client;
     if (this.hasFreshTabObservation(client)) return client;
@@ -40,6 +66,7 @@ export class TabObservationAdmission {
       || client.compatibility?.compatible === false || client.quarantined
       || client.activeRequest?.requestId || observation.activeRequest?.requestId
       || this.releaseCoordinator?.isReleasePending?.(clientId)
+      || this.hasPendingCommandForClient(clientId)
       || this.pendingUsesClient(clientId, state.requestId || '')) {
       return client;
     }

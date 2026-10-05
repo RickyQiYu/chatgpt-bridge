@@ -18,18 +18,20 @@ import { TabObservationAdmission } from './tabObservationAdmission.js';
  * request-visible decisions are emitted through the injected lifecycle.
  */
 export class BrowserClientCoordinator {
-  constructor({ hub, pending, lifecycle, runtimeOptions, sendCommand, releaseCoordinator = null }) {
+  constructor({ hub, pending, lifecycle, runtimeOptions, sendCommand, releaseCoordinator = null, hasPendingCommandForClient = () => false }) {
     this.hub = hub;
     this.pending = pending;
     this.lifecycle = lifecycle;
     this.runtimeOptions = runtimeOptions;
     this.sendCommand = sendCommand;
     this.releaseCoordinator = releaseCoordinator;
+    this.hasPendingCommandForClient = hasPendingCommandForClient;
     this.tabObservationAdmission = new TabObservationAdmission({
       hub,
       sendCommand,
       releaseCoordinator,
       pendingUsesClient: (clientId, excludeRequestId) => this.pendingUsesClient(clientId, excludeRequestId),
+      hasPendingCommandForClient,
     });
     this.tabs = new BrowserTabCoordinator({
       hub,
@@ -74,6 +76,7 @@ isPromptClientIdle(client = {}, excludeRequestId = '') {
   if (client.activeRequest?.requestId) return false;
   if (!this.tabObservationAdmission.hasFreshVoiceIdleComposer(client)) return false;
   if (this.releaseCoordinator?.isReleasePending?.(client.id)) return false;
+  if (this.hasPendingCommandForClient(client.id)) return false;
   if (this.pendingUsesClient(client.id, excludeRequestId)) return false;
   return true;
 }
@@ -265,6 +268,16 @@ async resolvePromptClient(state, chatOptions = {}, options = {}) {
       return await this.resolvePromptClient(state, chatOptions, { ...options, releaseBarrierWaited: true });
     }
     client = await this.tabObservationAdmission.refreshStaleTabObservation(client, state);
+    if (!this.isPromptClientIdle(client, state.requestId)
+      && this.hasPendingCommandForClient(client.id)) {
+      const error = new Error(`Browser extension client ${client.id} has another local command in flight.`);
+      error.code = 'BROWSER_COMMAND_PENDING';
+      throw error;
+    }
+    if (!this.isPromptClientIdle(client, state.requestId)
+      && this.tabObservationAdmission.canWaitForComposerStability(client, state)) {
+      client = await this.waitForPromptClientIdle(state, client, Number(options.idleTimeoutMs) || 5_000);
+    }
     if (!this.isPromptClientIdle(client, state.requestId)) throw new Error(`Browser extension client ${explicitClientId} is busy with ${client.activeRequest?.requestId || 'another local request'}.`);
     return this.#reservePromptTarget(state, { client, reason: 'explicit_client', sessionSwitch: Boolean(desiredSessionId && !clientMatchesSession(client, desiredSessionId)) });
   }

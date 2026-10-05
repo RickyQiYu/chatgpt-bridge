@@ -104,6 +104,7 @@ export class BrowserBridge {
       runtimeOptions: this.#runtimeOptions,
       sendCommand: async (type, data, options) => await this.#sendCommand(type, data, options),
       releaseCoordinator: this.#commandRegistry,
+      hasPendingCommandForClient: (clientId) => this.#commandRegistry.hasPendingForClient(clientId),
     });
     this.#staleRequestRelease = new StaleRequestReleaseCoordinator({
       activeRequestCandidates: () => this.#browserClients.activeRequestCandidates(),
