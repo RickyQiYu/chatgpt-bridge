@@ -84,3 +84,27 @@ test('assistant-turn marker skips a thought-duration control and finds the final
   assert.ok(result.answer.includes(answer));
   assert.ok(result.answer.includes(checkpoint));
 });
+
+test('assistant-turn marker with only a thought-duration control does not finalize the request', async () => {
+  const parser = await createAssistantFixtureParser();
+  const result = parser.parseRequestWithoutAssistant(`
+    <main>
+      <div data-turn-key="turn-current">
+        <div class="user-branch">
+          <div class="group/user-message" data-chatgpt-search-unit-key="user-unit" data-chatgpt-search-message-ids="user-message-id">
+            <div data-content-search-unit-key="user-unit"><p>A real submitted prompt</p></div>
+          </div>
+        </div>
+        <div class="assistant-branch">
+          <div class="assistant-header">
+            <span hidden data-chatgpt-agent-turn-start></span>
+            <button type="button"><span>思考了 13s</span></button>
+          </div>
+        </div>
+      </div>
+    </main>
+  `, { submittedUserTurnKey: 'turn-current::user' });
+
+  assert.equal(result.answer, '');
+  assert.equal(result.format, 'none');
+});

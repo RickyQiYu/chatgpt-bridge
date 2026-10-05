@@ -58,7 +58,7 @@
         current = parent;
         candidate = parent;
       }
-      return candidate === marker ? null : candidate;
+      return candidate !== marker && hasResponseText(candidate) ? candidate : null;
     }
 
     function currentAssistantNode(marker) {
