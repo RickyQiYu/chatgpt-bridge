@@ -171,3 +171,25 @@ test('canonical assistant message with a thought control retains a later Markdow
 
   assert.ok(result.answer.includes(answer));
 });
+
+test('image-only Markdown response remains a final assistant turn', async () => {
+  const parser = await createAssistantFixtureParser();
+  const result = parser.parseRequestWithoutAssistant(`
+    <main>
+      <div data-turn-key="turn-current">
+        <div class="user-branch">
+          <div class="group/user-message" data-chatgpt-search-unit-key="user-unit" data-chatgpt-search-message-ids="user-message-id">
+            <div data-content-search-unit-key="user-unit"><p>A real submitted prompt</p></div>
+          </div>
+        </div>
+        <div class="assistant-branch">
+          <span hidden data-chatgpt-agent-turn-start></span>
+          <div class="MarkdownRoot-test"><img src="https://example.test/generated.png" alt="generated image"></div>
+        </div>
+      </div>
+    </main>
+  `, { submittedUserTurnKey: 'turn-current::user' });
+
+  assert.equal(result.phase, 'ASSISTANT_FINAL');
+  assert.notEqual(result.format, 'none');
+});

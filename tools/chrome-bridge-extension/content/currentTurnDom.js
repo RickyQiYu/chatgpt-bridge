@@ -53,9 +53,10 @@
     }
 
     function hasResponseText(node) {
-      return Boolean(normalizeText(visibleText(node)))
-        && !interactiveOnlyText(node)
-        && hasResponseBody(node);
+      // Media replies can be complete even when they contain no visible text.
+      // hasResponseBody already excludes controls/status branches and accepts
+      // image, video, audio, and canvas content as substantive response data.
+      return !interactiveOnlyText(node) && hasResponseBody(node);
     }
 
     function currentAssistantNodeFromMarker(marker, turnContainer, userMarkers = []) {
