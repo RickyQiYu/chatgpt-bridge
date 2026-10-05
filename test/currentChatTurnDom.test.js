@@ -55,3 +55,141 @@ test('legacy assistant role nodes inside a keyed turn do not duplicate its assis
   assert.equal(assistants.length, 1);
   assert.equal(parser.snapshots.readLatestAssistantSnapshot().answer, 'One answer');
 });
+
+test('assistant-turn marker skips a thought-duration control and finds the final Markdown response', async () => {
+  const parser = await createAssistantFixtureParser();
+  const checkpoint = '{"active_frontier":["frontier"],"ambiguous_send":false,"binding_epoch":1,"continuity":"valid","outstanding":[],"project_id":"example--project","repository":"example/project","schema":"project-governance/planner-runtime-checkpoint-v1","source_identity":"abcdef0","wake_sequence":1}';
+  const answer = `The complete Planner response.\n\n[planner-runtime-checkpoint-v1]\n${checkpoint}\n[/planner-runtime-checkpoint-v1]`;
+  const result = parser.parseRequestWithoutAssistant(`
+    <main>
+      <div data-turn-key="turn-current">
+        <div class="user-branch">
+          <div class="group/user-message" data-chatgpt-search-unit-key="user-unit" data-chatgpt-search-message-ids="user-message-id">
+            <div data-content-search-unit-key="user-unit"><p>A real submitted prompt</p></div>
+          </div>
+        </div>
+        <div class="assistant-branch">
+          <div class="assistant-header">
+            <span hidden data-chatgpt-agent-turn-start></span>
+            <button type="button"><span>思考了 13s</span></button>
+          </div>
+          <div class="MarkdownRoot-test"><p>${answer}</p></div>
+        </div>
+      </div>
+    </main>
+  `, { submittedUserTurnKey: 'turn-current::user' });
+
+  assert.equal(result.userTurnKey, 'turn-current::user');
+  assert.equal(result.turnKey, 'turn-current::assistant');
+  assert.ok(result.answer.includes(answer));
+  assert.ok(result.answer.includes(checkpoint));
+});
+
+test('assistant-turn marker with only a thought-duration control does not finalize the request', async () => {
+  const parser = await createAssistantFixtureParser();
+  const result = parser.parseRequestWithoutAssistant(`
+    <main>
+      <div data-turn-key="turn-current">
+        <div class="user-branch">
+          <div class="group/user-message" data-chatgpt-search-unit-key="user-unit" data-chatgpt-search-message-ids="user-message-id">
+            <div data-content-search-unit-key="user-unit"><p>A real submitted prompt</p></div>
+          </div>
+        </div>
+        <div class="assistant-branch">
+          <div class="assistant-header">
+            <span hidden data-chatgpt-agent-turn-start></span>
+            <button type="button"><span>思考了 13s</span></button>
+          </div>
+        </div>
+      </div>
+    </main>
+  `, { submittedUserTurnKey: 'turn-current::user' });
+
+  assert.equal(result.answer, '');
+  assert.equal(result.format, 'none');
+  assert.equal(result.phase, 'ASSISTANT_PLACEHOLDER');
+});
+
+test('legacy assistant section with only a thought-duration control stays non-final', async () => {
+  const parser = await createAssistantFixtureParser();
+  const result = parser.parseRequestWithoutAssistant(`
+    <main>
+      <section data-turn="user" data-turn-id="legacy-user-turn">
+        <div class="rich-text-user-turn">A real submitted prompt</div>
+      </section>
+      <section data-turn="assistant" data-turn-id="legacy-assistant-turn">
+        <div class="assistant-header">
+          <span hidden data-chatgpt-agent-turn-start></span>
+          <button type="button"><span>思考了 13s</span></button>
+        </div>
+      </section>
+    </main>
+  `, { submittedUserTurnKey: 'legacy-user-turn' });
+
+  assert.equal(result.answer, '');
+  assert.equal(result.format, 'none');
+  assert.equal(result.phase, 'ASSISTANT_PLACEHOLDER');
+});
+
+test('canonical assistant message ID does not make a thought-duration control final', async () => {
+  const parser = await createAssistantFixtureParser();
+  const result = parser.parseRequestWithoutAssistant(`
+    <main>
+      <section data-turn="user" data-turn-id="legacy-user-turn">
+        <div class="rich-text-user-turn">A real submitted prompt</div>
+      </section>
+      <section data-turn="assistant" data-turn-id="legacy-assistant-turn" data-message-author-role="assistant" data-message-id="assistant-message-id">
+        <div class="assistant-header">
+          <button type="button"><span>思考了 13s</span></button>
+        </div>
+      </section>
+    </main>
+  `, { submittedUserTurnKey: 'legacy-user-turn' });
+
+  assert.equal(result.answer, '');
+  assert.equal(result.format, 'none');
+  assert.equal(result.phase, 'ASSISTANT_PLACEHOLDER');
+});
+
+test('canonical assistant message with a thought control retains a later Markdown response', async () => {
+  const parser = await createAssistantFixtureParser();
+  const answer = 'The final canonical response body.';
+  const result = parser.parseRequestWithoutAssistant(`
+    <main>
+      <section data-turn="user" data-turn-id="legacy-user-turn">
+        <div class="rich-text-user-turn">A real submitted prompt</div>
+      </section>
+      <section data-turn="assistant" data-turn-id="legacy-assistant-turn" data-message-author-role="assistant" data-message-id="assistant-message-id">
+        <div class="assistant-header">
+          <span hidden data-chatgpt-agent-turn-start></span>
+          <button type="button"><span>思考了 13s</span></button>
+        </div>
+        <div class="MarkdownRoot-test"><p>${answer}</p></div>
+      </section>
+    </main>
+  `, { submittedUserTurnKey: 'legacy-user-turn' });
+
+  assert.ok(result.answer.includes(answer));
+});
+
+test('image-only Markdown response remains a final assistant turn', async () => {
+  const parser = await createAssistantFixtureParser();
+  const result = parser.parseRequestWithoutAssistant(`
+    <main>
+      <div data-turn-key="turn-current">
+        <div class="user-branch">
+          <div class="group/user-message" data-chatgpt-search-unit-key="user-unit" data-chatgpt-search-message-ids="user-message-id">
+            <div data-content-search-unit-key="user-unit"><p>A real submitted prompt</p></div>
+          </div>
+        </div>
+        <div class="assistant-branch">
+          <span hidden data-chatgpt-agent-turn-start></span>
+          <div class="MarkdownRoot-test"><img src="https://example.test/generated.png" alt="generated image"></div>
+        </div>
+      </div>
+    </main>
+  `, { submittedUserTurnKey: 'turn-current::user' });
+
+  assert.equal(result.phase, 'ASSISTANT_FINAL');
+  assert.notEqual(result.format, 'none');
+});

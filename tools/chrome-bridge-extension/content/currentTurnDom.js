@@ -28,6 +28,37 @@
       return 0;
     }
 
+    function interactiveOnlyText(node) {
+      const text = normalizeText(visibleText(node));
+      if (!text) return false;
+      const controls = [];
+      if (node?.matches?.('button, [role="button"]')) controls.push(node);
+      controls.push(...Array.from(node?.querySelectorAll?.('button, [role="button"]') || []));
+      if (!controls.length) return false;
+      const controlText = normalizeText([...new Set(controls.map((control) => normalizeText(visibleText(control))).filter(Boolean))].join(' '));
+      return Boolean(controlText && controlText === text);
+    }
+
+    function hasResponseBody(node) {
+      const selector = '[class*="MarkdownRoot"], .markdown, p, h1, h2, h3, h4, h5, h6, li, blockquote, table, pre, code, img, video, audio, canvas, [data-testid*="artifact" i]';
+      const candidates = [];
+      if (node?.matches?.(selector)) candidates.push(node);
+      candidates.push(...Array.from(node?.querySelectorAll?.(selector) || []));
+      return candidates.some((candidate) => {
+        if (candidate.closest?.('button, [role="button"], .reasoning-summary, .loading-shimmer-tertiary, [data-testid^="cot-v5-"]')) return false;
+        return Boolean(normalizeText(visibleText(candidate))
+          || candidate.matches?.('img, video, audio, canvas')
+          || candidate.querySelector?.('img, video, audio, canvas'));
+      });
+    }
+
+    function hasResponseText(node) {
+      // Media replies can be complete even when they contain no visible text.
+      // hasResponseBody already excludes controls/status branches and accepts
+      // image, video, audio, and canvas content as substantive response data.
+      return !interactiveOnlyText(node) && hasResponseBody(node);
+    }
+
     function currentAssistantNodeFromMarker(marker, turnContainer, userMarkers = []) {
       if (!marker) return null;
       let current = marker;
@@ -37,13 +68,13 @@
         if (userMarkers.some((userMarker) => parent === userMarker || parent.contains?.(userMarker))) break;
         const markerBranch = Array.from(parent.children || []).find((child) => child === current || child.contains?.(current)) || current;
         const siblings = Array.from(parent.children || []).filter((child) => child !== markerBranch);
-        if (siblings.some((sibling) => normalizeText(visibleText(sibling)))) return parent;
+        if (siblings.some(hasResponseText)) return parent;
         const directText = Array.from(parent.childNodes || []).some((child) => child.nodeType === Node.TEXT_NODE && normalizeText(child.textContent || ''));
-        if (directText) return parent;
+        if (directText && !interactiveOnlyText(parent)) return parent;
         current = parent;
         candidate = parent;
       }
-      return candidate === marker ? null : candidate;
+      return candidate !== marker && hasResponseText(candidate) ? candidate : null;
     }
 
     function currentAssistantNode(marker) {
@@ -160,7 +191,7 @@
           && !Array.from(node.querySelectorAll?.(USER_TURN_MESSAGE_SELECTOR) || []).some(isCurrentUserMessage)));
     }
 
-    return Object.freeze({ getTurnNodes, getTurnNodesFromMatches, requestTurnRecords, currentAssistantNode, currentTurnContainer, currentTurnIdentity, getFinalAssistantNode, currentTurnKey, selectAssistantForSubmittedUser, turnKey, isCurrentAssistantNode, isCurrentUserMessage, turnRole });
+    return Object.freeze({ getTurnNodes, getTurnNodesFromMatches, requestTurnRecords, currentAssistantNode, currentTurnContainer, currentTurnIdentity, getFinalAssistantNode, currentTurnKey, selectAssistantForSubmittedUser, turnKey, isCurrentAssistantNode, isCurrentUserMessage, turnRole, hasResponseText });
   }
 
   globalThis.ChatGptCurrentTurnDom = Object.freeze({ createCurrentTurnDom, TURN_SELECTOR });

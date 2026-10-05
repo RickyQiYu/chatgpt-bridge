@@ -71,20 +71,20 @@ function getTurnNodes() {
   return Array.from(new Set([...legacyTurns, ...currentTurns])).sort(compareDocumentOrder);
 }
 function isCredibleFinalAssistantNode(node) {
+  const markdownBody = node?.matches?.('[class*="MarkdownRoot"], .markdown');
+  if (markdownBody) return CURRENT_TURN_DOM.hasResponseText(node);
   if (CURRENT_TURN_DOM.isCurrentAssistantNode(node)) {
-    return Boolean(normalizeText(visibleText(node))
+    return Boolean(CURRENT_TURN_DOM.hasResponseText(node)
       || node?.querySelector?.('pre, code, img, video, audio, canvas, [data-testid*="artifact" i]'));
   }
   if (!node?.matches?.('[data-message-author-role="assistant"]')) return false;
-  return Boolean(node.getAttribute?.('data-message-id')
-    || node.getAttribute?.('data-message-model-slug')
-    || node.hasAttribute?.('data-turn-start-message')
-    || node.matches?.('.markdown')
-    || node.querySelector?.('.markdown, [data-start][data-end], pre, code'));
+  return Boolean(CURRENT_TURN_DOM.hasResponseText(node)
+    || node.querySelector?.('pre, code, img, video, audio, canvas, [data-testid*="artifact" i]'));
 }
 function getFinalAssistantNode(root) {
-  return turnDom.getFinalAssistantNode(root)
-    || CURRENT_TURN_DOM.getFinalAssistantNode(root, isCredibleFinalAssistantNode);
+  const legacy = turnDom.getFinalAssistantNode(root);
+  if (legacy && isCredibleFinalAssistantNode(legacy)) return legacy;
+  return CURRENT_TURN_DOM.getFinalAssistantNode(root, isCredibleFinalAssistantNode);
 }
 function turnKey(turn, index = -1) {
   return CURRENT_TURN_DOM.turnKey(turn, getFinalAssistantNode(turn), turnRole(turn), index)
