@@ -82,6 +82,7 @@ export class MockExtensionTab extends EventEmitter {
     this.closed = false;
     this.serverInstanceId = '';
     this.state = state || new MockChatGptStateMachine({ tabId: this.tabId, origin: 'https://chatgpt.com' });
+    this.observationRevision = 0;
     this.lastPrompt = '';
     this.currentGeneration = null;
     this.commandJournal = [];
@@ -369,6 +370,15 @@ export class MockExtensionTab extends EventEmitter {
         return await this.#result(envelope, type === 'request.resume' ? 'request.resumed' : 'response.snapshot', {
           activeRequest: this.state.activeRequest,
           observation: this.createObservation(),
+        });
+      }
+      if (type === 'tab.observation.refresh') {
+        const reason = text(body.reason) || 'bridge.prompt_admission';
+        await this.publishObservation(reason);
+        const observation = this.createObservation();
+        return await this.#result(envelope, 'tab.observation.refreshed', {
+          revision: observation.revision,
+          observedAt: observation.observedAt,
         });
       }
       if (type === 'request.effect.reconcile') {
@@ -713,7 +723,7 @@ export class MockExtensionTab extends EventEmitter {
     };
   }
 
-  createObservation() {
+  createObservation({ advanceRevision = false } = {}) {
     const snapshot = this.state.outputSnapshot();
     const assistantIndex = snapshot.assistant ? this.state.turns.indexOf(snapshot.assistant) : -1;
     const userIndex = snapshot.user ? this.state.turns.indexOf(snapshot.user) : -1;
@@ -752,12 +762,17 @@ export class MockExtensionTab extends EventEmitter {
       turnKey: snapshot.assistant?.key || '',
     }));
     const artifactState = artifacts.length ? 'ready' : 'none';
+    const stateRevision = Math.max(0, Number(this.state.revision) || 0);
+    this.observationRevision = Math.max(
+      this.observationRevision + (advanceRevision ? 1 : 0),
+      stateRevision,
+    );
     return {
       schemaVersion: 1,
-      revision: Math.max(0, Number(this.state.revision) || 0),
+      revision: this.observationRevision,
       observerId: `${this.clientId}:${this.contentEpoch}`,
       observedAt: Date.now(),
-      stableForMs: final ? 2_000 : 0,
+      stableForMs: this.state.generating ? 0 : 2_000,
       url: this.state.url,
       title: 'ChatGPT',
       conversationId: this.state.conversationId,
@@ -817,7 +832,7 @@ export class MockExtensionTab extends EventEmitter {
 
   async publishObservation(reason = '') {
     if (!this.connected || this.ws?.readyState !== WebSocket.OPEN) return;
-    const observation = this.createObservation();
+    const observation = this.createObservation({ advanceRevision: true });
     const body = {
       type: 'tab.observation',
       observation,

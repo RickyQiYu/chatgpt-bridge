@@ -10,26 +10,7 @@ import {
 import { makeEvent } from '../requestState.js';
 import { BrowserTabCoordinator } from './browserTabCoordinator.js';
 import { isRequestRuntimeFinished } from './requestRuntimeProjection.js';
-
-function hasFreshVoiceIdleComposer(client = {}) {
-  // Hub-connected browser and extension clients can both receive prompt writes,
-  // so every identified runtime must prove the same safe composer state.
-  if (!String(client.runtime || client.transport || '').trim()) return true;
-  const observation = client.tabObservation || {};
-  const observedAt = Number(observation.observedAt);
-  const now = Date.now();
-  const freshnessMs = Math.max(1_000, Number(config.clientStaleMs) || 30_000);
-  return Boolean(
-    Number.isFinite(observedAt) && observedAt > 0 && observedAt <= now && now - observedAt <= freshnessMs
-    && Number(observation.stableForMs) >= 750
-    && observation.document?.pageReady === true
-    && observation.document?.chatMainReady === true
-    && observation.composer?.ready === true
-    && observation.composer?.primaryAction === 'voice'
-    && observation.composer?.hasDraft === false
-    && ['idle', 'stopped'].includes(String(observation.generation?.state || ''))
-  );
-}
+import { TabObservationAdmission } from './tabObservationAdmission.js';
 
 /**
  * Owns prompt-tab selection, automatic tab creation, browser-control routing,
@@ -37,13 +18,21 @@ function hasFreshVoiceIdleComposer(client = {}) {
  * request-visible decisions are emitted through the injected lifecycle.
  */
 export class BrowserClientCoordinator {
-  constructor({ hub, pending, lifecycle, runtimeOptions, sendCommand, releaseCoordinator = null }) {
+  constructor({ hub, pending, lifecycle, runtimeOptions, sendCommand, releaseCoordinator = null, hasPendingCommandForClient = () => false }) {
     this.hub = hub;
     this.pending = pending;
     this.lifecycle = lifecycle;
     this.runtimeOptions = runtimeOptions;
     this.sendCommand = sendCommand;
     this.releaseCoordinator = releaseCoordinator;
+    this.hasPendingCommandForClient = hasPendingCommandForClient;
+    this.tabObservationAdmission = new TabObservationAdmission({
+      hub,
+      sendCommand,
+      releaseCoordinator,
+      pendingUsesClient: (clientId, excludeRequestId) => this.pendingUsesClient(clientId, excludeRequestId),
+      hasPendingCommandForClient,
+    });
     this.tabs = new BrowserTabCoordinator({
       hub,
       runtimeOptions,
@@ -85,8 +74,9 @@ isPromptClientIdle(client = {}, excludeRequestId = '') {
   if (client.compatible === false || client.compatibility?.compatible === false) return false;
   if (client.quarantined) return false;
   if (client.activeRequest?.requestId) return false;
-  if (!hasFreshVoiceIdleComposer(client)) return false;
+  if (!this.tabObservationAdmission.hasFreshVoiceIdleComposer(client)) return false;
   if (this.releaseCoordinator?.isReleasePending?.(client.id)) return false;
+  if (this.hasPendingCommandForClient(client.id)) return false;
   if (this.pendingUsesClient(client.id, excludeRequestId)) return false;
   return true;
 }
@@ -269,13 +259,24 @@ async resolvePromptClient(state, chatOptions = {}, options = {}) {
   }
 
   if (explicitClientId) {
-    const client = clients.find((candidate) => candidate.id === explicitClientId);
+    let client = clients.find((candidate) => candidate.id === explicitClientId);
     if (!client) throw new Error(`Browser extension client not found or not ready: ${explicitClientId}`);
     if (this.releaseCoordinator?.isReleasePending?.(client.id) && !options.releaseBarrierWaited) {
       this.lifecycle.emitRequestEvent(state, makeEvent('client.release.wait_started', { requestId: state.requestId, clientId: client.id }));
       await this.releaseCoordinator.waitForReleaseBarrier(client.id, Number(options.releaseTimeoutMs) || 10_500);
       this.lifecycle.emitRequestEvent(state, makeEvent('client.release.wait_completed', { requestId: state.requestId, clientId: client.id }));
       return await this.resolvePromptClient(state, chatOptions, { ...options, releaseBarrierWaited: true });
+    }
+    client = await this.tabObservationAdmission.refreshStaleTabObservation(client, state);
+    if (!this.isPromptClientIdle(client, state.requestId)
+      && this.hasPendingCommandForClient(client.id)) {
+      const error = new Error(`Browser extension client ${client.id} has another local command in flight.`);
+      error.code = 'BROWSER_COMMAND_PENDING';
+      throw error;
+    }
+    if (!this.isPromptClientIdle(client, state.requestId)
+      && this.tabObservationAdmission.canWaitForComposerStability(client, state)) {
+      client = await this.waitForPromptClientIdle(state, client, Number(options.idleTimeoutMs) || 5_000);
     }
     if (!this.isPromptClientIdle(client, state.requestId)) throw new Error(`Browser extension client ${explicitClientId} is busy with ${client.activeRequest?.requestId || 'another local request'}.`);
     return this.#reservePromptTarget(state, { client, reason: 'explicit_client', sessionSwitch: Boolean(desiredSessionId && !clientMatchesSession(client, desiredSessionId)) });

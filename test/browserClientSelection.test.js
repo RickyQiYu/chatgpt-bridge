@@ -120,6 +120,146 @@ test('extension prompt admission requires a fresh stable Voice composer, not Sen
   }), false, 'browser websocket clients also need Voice-idle composer proof');
 });
 
+test('stale Voice-idle extension observation refreshes before prompt admission', async () => {
+  const staleObservedAt = Date.now() - 60_000;
+  const client = {
+    id: 'client-stale-observation',
+    runtime: 'extension',
+    ready: true,
+    compatible: true,
+    session: { id: 'session-stale-observation' },
+    activeRequest: null,
+    tabObservation: {
+      observerId: 'observer-stale',
+      revision: 3,
+      observedAt: staleObservedAt,
+      stableForMs: 5_000,
+      document: { pageReady: true, chatMainReady: true },
+      composer: { ready: true, primaryAction: 'voice', hasDraft: false },
+      generation: { state: 'stopped' },
+    },
+  };
+  const hub = new ClientSelectionHub([client]);
+  const refreshCalls = [];
+  const coordinator = new BrowserClientCoordinator({
+    hub,
+    pending: new Map(),
+    lifecycle: {},
+    runtimeOptions: {},
+    sendCommand: async (type, payload, options) => {
+      refreshCalls.push({ type, payload, options });
+      client.tabObservation = {
+        ...client.tabObservation,
+        revision: client.tabObservation.revision + 1,
+        observedAt: Date.now(),
+      };
+      hub.emit('client.activity', { clientId: client.id, client });
+      return { observedAt: client.tabObservation.observedAt, revision: client.tabObservation.revision };
+    },
+  });
+
+  const target = await coordinator.resolvePromptClient(
+    { requestId: 'request-stale-observation' },
+    { sessionId: 'session-stale-observation' },
+    { sourceClientId: client.id },
+  );
+
+  assert.equal(target.client.id, client.id);
+  assert.equal(refreshCalls.length, 1);
+  assert.equal(refreshCalls[0].type, 'tab.observation.refresh');
+  assert.equal(refreshCalls[0].options.sourceClientId, client.id);
+  assert.ok(client.tabObservation.observedAt > staleObservedAt);
+});
+
+test('explicit target waits for a fresh Voice-idle observation to become stable', async () => {
+  const client = {
+    id: 'client-unstable-observation',
+    runtime: 'extension',
+    ready: true,
+    compatible: true,
+    session: { id: 'session-unstable-observation' },
+    activeRequest: null,
+    tabObservation: {
+      observerId: 'observer-unstable',
+      revision: 1,
+      observedAt: Date.now(),
+      stableForMs: 0,
+      document: { pageReady: true, chatMainReady: true },
+      composer: { ready: true, primaryAction: 'voice', hasDraft: false },
+      generation: { state: 'idle' },
+    },
+  };
+  const hub = new ClientSelectionHub([client]);
+  const refreshCalls = [];
+  const coordinator = new BrowserClientCoordinator({
+    hub,
+    pending: new Map(),
+    lifecycle: {},
+    runtimeOptions: {},
+    sendCommand: async (...args) => refreshCalls.push(args),
+  });
+  const target = coordinator.resolvePromptClient(
+    { requestId: 'request-unstable-observation' },
+    { sessionId: 'session-unstable-observation' },
+    { sourceClientId: client.id },
+  );
+  setTimeout(() => {
+    client.tabObservation = {
+      ...client.tabObservation,
+      revision: 2,
+      observedAt: Date.now(),
+      stableForMs: 800,
+    };
+    hub.emit('client.activity', { clientId: client.id, client });
+  }, 50);
+
+  const selected = await target;
+
+  assert.equal(selected.client.id, client.id);
+  assert.equal(refreshCalls.length, 0);
+  assert.equal(client.tabObservation.stableForMs, 800);
+});
+
+test('pending standalone Bridge command blocks refresh and prompt reservation for its client', async () => {
+  const client = {
+    id: 'client-pending-command',
+    runtime: 'extension',
+    ready: true,
+    compatible: true,
+    session: { id: 'session-pending-command' },
+    activeRequest: null,
+    tabObservation: {
+      observerId: 'observer-pending-command',
+      revision: 1,
+      observedAt: Date.now() - 60_000,
+      stableForMs: 5_000,
+      document: { pageReady: true, chatMainReady: true },
+      composer: { ready: true, primaryAction: 'voice', hasDraft: false },
+      generation: { state: 'stopped' },
+    },
+  };
+  const hub = new ClientSelectionHub([client]);
+  const refreshCalls = [];
+  const coordinator = new BrowserClientCoordinator({
+    hub,
+    pending: new Map(),
+    lifecycle: {},
+    runtimeOptions: {},
+    hasPendingCommandForClient: () => true,
+    sendCommand: async (...args) => refreshCalls.push(args),
+  });
+
+  const result = await coordinator.resolvePromptClient(
+    { requestId: 'request-pending-command' },
+    { sessionId: 'session-pending-command' },
+    { sourceClientId: client.id },
+  ).then(() => null, (error) => error);
+
+  assert.equal(result?.code, 'BROWSER_COMMAND_PENDING');
+  assert.equal(refreshCalls.length, 0);
+  assert.equal(client.tabObservation.revision, 1);
+});
+
 test('auto-opened extension prompt waits for a stable Voice-idle observation', async () => {
   const client = {
     id: 'client-new-tab', runtime: 'extension', ready: true, compatible: true, activeRequest: null,

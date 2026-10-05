@@ -77,6 +77,17 @@ test('tab identification rejects previous content runtime when extension version
   assert.match(staleContent.message, /Content runtime 4\.4\.5 is outdated/);
 });
 
+test('tab identification rejects 2.4.14 because it cannot refresh stale observations', () => {
+  const staleObservationRefresh = evaluateExtensionCompatibility({
+    runtime: 'extension',
+    extensionProtocolVersion: EXTENSION_COMPATIBILITY.protocolVersion,
+    extensionVersion: '2.4.14',
+    clientVersion: '4.4.14',
+  });
+  assert.equal(staleObservationRefresh.compatible, false);
+  assert.equal(staleObservationRefresh.status, 'extension_outdated');
+});
+
 test('candidate package and extension versions match the next patch set', async () => {
   const packageMetadata = JSON.parse(await fs.readFile(path.resolve('package.json'), 'utf8'));
   const packageLock = JSON.parse(await fs.readFile(path.resolve('package-lock.json'), 'utf8'));
@@ -85,15 +96,15 @@ test('candidate package and extension versions match the next patch set', async 
   const content = await fs.readFile(path.join(root, 'content.js'), 'utf8');
   const contentVersion = content.match(/CONTENT_SCRIPT_VERSION = '([^']+)'/)?.[1] || '';
 
-  assert.equal(packageMetadata.version, '6.4.7');
-  assert.equal(packageLock.version, '6.4.7');
-  assert.equal(packageLock.packages[''].version, '6.4.7');
-  assert.equal(EXTENSION_COMPATIBILITY.minExtensionVersion, '2.4.14');
-  assert.equal(EXTENSION_COMPATIBILITY.recommendedExtensionVersion, '2.4.14');
-  assert.equal(EXTENSION_COMPATIBILITY.minContentVersion, '4.4.14');
-  assert.equal(manifest.version, '2.4.14');
-  assert.equal(manifest.version_name, '2.4.14');
-  assert.equal(contentVersion, '4.4.14');
+  assert.equal(packageMetadata.version, '6.4.8');
+  assert.equal(packageLock.version, '6.4.8');
+  assert.equal(packageLock.packages[''].version, '6.4.8');
+  assert.equal(EXTENSION_COMPATIBILITY.minExtensionVersion, '2.4.15');
+  assert.equal(EXTENSION_COMPATIBILITY.recommendedExtensionVersion, '2.4.15');
+  assert.equal(EXTENSION_COMPATIBILITY.minContentVersion, '4.4.15');
+  assert.equal(manifest.version, '2.4.15');
+  assert.equal(manifest.version_name, '2.4.15');
+  assert.equal(contentVersion, '4.4.15');
   assert.equal(manifest.version, EXTENSION_COMPATIBILITY.recommendedExtensionVersion);
   assert.equal(manifest.version, EXTENSION_COMPATIBILITY.minExtensionVersion);
   assert.equal(contentVersion, EXTENSION_COMPATIBILITY.minContentVersion);

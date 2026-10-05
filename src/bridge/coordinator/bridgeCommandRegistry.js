@@ -48,6 +48,13 @@ export class BridgeCommandRegistry {
   get size() { return this.commands.size; }
   has(commandId) { return this.commands.has(commandId); }
 
+  hasPendingForClient(clientId = '') {
+    const id = String(clientId || '');
+    if (!id) return false;
+    return Array.from(this.commands.values()).some((command) =>
+      command.clientId === id || command.sourceClientId === id);
+  }
+
   handleResponse(clientId, payload) {
     const command = this.commands.get(payload.commandId);
     if (!command || (command.clientId && command.clientId !== clientId)) return false;

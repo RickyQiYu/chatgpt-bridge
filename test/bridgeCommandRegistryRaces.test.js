@@ -68,6 +68,21 @@ test('command settlement detaches its abort listener', async (t) => {
   assert.equal(getEventListeners(controller.signal, 'abort').length, 0);
 });
 
+test('command registry reports pending commands by explicit client until terminal result', async (t) => {
+  const { registry, sent, send, respond } = harness(t);
+  const pending = send();
+  await flush();
+
+  try {
+    assert.equal(registry.hasPendingForClient('tab-1'), true);
+    assert.equal(registry.hasPendingForClient('tab-2'), false);
+  } finally {
+    respond(sent[0].commandId);
+    await pending;
+  }
+  assert.equal(registry.hasPendingForClient('tab-1'), false);
+});
+
 test('duplicate command IDs cannot replace an outstanding command', async (t) => {
   const { send, sent, respond } = harness(t);
   const first = send({ commandId: 'same-id' });

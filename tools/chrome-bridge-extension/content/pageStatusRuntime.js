@@ -276,12 +276,72 @@
       return () => observationSubscribers.delete(subscriber);
     }
 
+    function refreshTabObservation(reason = 'requested', timeoutMs = 4_500) {
+      const observer = startTabObserver();
+      if (typeof observer?.force !== 'function') throw new Error('Tab observer cannot force a refresh');
+      const requestedReason = String(reason || 'requested');
+      const previousRevision = Number(lastTabObservation?.revision) || 0;
+      const previousObservedAt = Number(lastTabObservation?.observedAt) || 0;
+      const waitMs = Math.max(100, Number(timeoutMs) || 4_500);
+
+      return new Promise((resolve, reject) => {
+        let settled = false;
+        let timeout = null;
+        let unsubscribe = () => {};
+
+        const finish = (callback, value) => {
+          if (settled) return;
+          settled = true;
+          if (timeout !== null) clearTimeout(timeout);
+          unsubscribe();
+          callback(value);
+        };
+
+        const acceptFreshObservation = (observation) => {
+          const revision = Number(observation?.revision) || 0;
+          const observedAt = Number(observation?.observedAt) || 0;
+          if (revision > previousRevision && observedAt > previousObservedAt) {
+            finish(resolve, observation);
+          }
+        };
+
+        unsubscribe = subscribeTabObservation(acceptFreshObservation);
+        timeout = setTimeout(() => {
+          const error = new Error(`Timed out waiting for a fresh tab observation after ${waitMs}ms`);
+          error.code = 'TAB_OBSERVATION_REFRESH_TIMEOUT';
+          finish(reject, error);
+        }, waitMs);
+
+        try {
+          Promise.resolve(observer.force(requestedReason)).then(
+            acceptFreshObservation,
+            (error) => finish(reject, error),
+          );
+        } catch (error) {
+          finish(reject, error);
+        }
+      });
+    }
+
+    async function handleTabObservationRefresh(payload = {}) {
+      const observation = await refreshTabObservation(String(payload.reason || 'bridge.prompt_admission'));
+      send({
+        type: 'tab.observation.refreshed',
+        commandId: String(payload.commandId || ''),
+        revision: Number(observation.revision) || 0,
+        observedAt: Number(observation.observedAt) || 0,
+      });
+      return observation;
+    }
+
     return Object.freeze({
       getLastTabObservation,
+      handleTabObservationRefresh,
       pagePresence,
       schedulePageStatus,
       scheduleTabObservation,
       sendPageStatus,
+      refreshTabObservation,
       startPageReadinessMonitor,
       startTabObserver,
       stopPageReadinessMonitor,
