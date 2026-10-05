@@ -39,8 +39,23 @@
       return Boolean(controlText && controlText === text);
     }
 
+    function hasResponseBody(node) {
+      const selector = '[class*="MarkdownRoot"], .markdown, p, h1, h2, h3, h4, h5, h6, li, blockquote, table, pre, code, img, video, audio, canvas, [data-testid*="artifact" i]';
+      const candidates = [];
+      if (node?.matches?.(selector)) candidates.push(node);
+      candidates.push(...Array.from(node?.querySelectorAll?.(selector) || []));
+      return candidates.some((candidate) => {
+        if (candidate.closest?.('button, [role="button"], .reasoning-summary, .loading-shimmer-tertiary, [data-testid^="cot-v5-"]')) return false;
+        return Boolean(normalizeText(visibleText(candidate))
+          || candidate.matches?.('img, video, audio, canvas')
+          || candidate.querySelector?.('img, video, audio, canvas'));
+      });
+    }
+
     function hasResponseText(node) {
-      return Boolean(normalizeText(visibleText(node))) && !interactiveOnlyText(node);
+      return Boolean(normalizeText(visibleText(node)))
+        && !interactiveOnlyText(node)
+        && hasResponseBody(node);
     }
 
     function currentAssistantNodeFromMarker(marker, turnContainer, userMarkers = []) {

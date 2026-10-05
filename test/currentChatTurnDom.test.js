@@ -130,3 +130,44 @@ test('legacy assistant section with only a thought-duration control stays non-fi
   assert.equal(result.format, 'none');
   assert.equal(result.phase, 'ASSISTANT_PLACEHOLDER');
 });
+
+test('canonical assistant message ID does not make a thought-duration control final', async () => {
+  const parser = await createAssistantFixtureParser();
+  const result = parser.parseRequestWithoutAssistant(`
+    <main>
+      <section data-turn="user" data-turn-id="legacy-user-turn">
+        <div class="rich-text-user-turn">A real submitted prompt</div>
+      </section>
+      <section data-turn="assistant" data-turn-id="legacy-assistant-turn" data-message-author-role="assistant" data-message-id="assistant-message-id">
+        <div class="assistant-header">
+          <button type="button"><span>思考了 13s</span></button>
+        </div>
+      </section>
+    </main>
+  `, { submittedUserTurnKey: 'legacy-user-turn' });
+
+  assert.equal(result.answer, '');
+  assert.equal(result.format, 'none');
+  assert.equal(result.phase, 'ASSISTANT_PLACEHOLDER');
+});
+
+test('canonical assistant message with a thought control retains a later Markdown response', async () => {
+  const parser = await createAssistantFixtureParser();
+  const answer = 'The final canonical response body.';
+  const result = parser.parseRequestWithoutAssistant(`
+    <main>
+      <section data-turn="user" data-turn-id="legacy-user-turn">
+        <div class="rich-text-user-turn">A real submitted prompt</div>
+      </section>
+      <section data-turn="assistant" data-turn-id="legacy-assistant-turn" data-message-author-role="assistant" data-message-id="assistant-message-id">
+        <div class="assistant-header">
+          <span hidden data-chatgpt-agent-turn-start></span>
+          <button type="button"><span>思考了 13s</span></button>
+        </div>
+        <div class="MarkdownRoot-test"><p>${answer}</p></div>
+      </section>
+    </main>
+  `, { submittedUserTurnKey: 'legacy-user-turn' });
+
+  assert.ok(result.answer.includes(answer));
+});
