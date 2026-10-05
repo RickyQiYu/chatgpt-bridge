@@ -108,3 +108,23 @@ test('assistant-turn marker with only a thought-duration control does not finali
   assert.equal(result.answer, '');
   assert.equal(result.format, 'none');
 });
+
+test('legacy assistant section with only a thought-duration control stays non-final', async () => {
+  const parser = await createAssistantFixtureParser();
+  const result = parser.parseRequestWithoutAssistant(`
+    <main>
+      <section data-turn="user" data-turn-id="legacy-user-turn">
+        <div class="rich-text-user-turn">A real submitted prompt</div>
+      </section>
+      <section data-turn="assistant" data-turn-id="legacy-assistant-turn">
+        <div class="assistant-header">
+          <span hidden data-chatgpt-agent-turn-start></span>
+          <button type="button"><span>思考了 13s</span></button>
+        </div>
+      </section>
+    </main>
+  `, { submittedUserTurnKey: 'legacy-user-turn' });
+
+  assert.equal(result.answer, '');
+  assert.equal(result.format, 'none');
+});

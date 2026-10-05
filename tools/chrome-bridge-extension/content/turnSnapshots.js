@@ -72,7 +72,7 @@ function getTurnNodes() {
 }
 function isCredibleFinalAssistantNode(node) {
   if (CURRENT_TURN_DOM.isCurrentAssistantNode(node)) {
-    return Boolean(normalizeText(visibleText(node))
+    return Boolean(CURRENT_TURN_DOM.hasResponseText(node)
       || node?.querySelector?.('pre, code, img, video, audio, canvas, [data-testid*="artifact" i]'));
   }
   if (!node?.matches?.('[data-message-author-role="assistant"]')) return false;

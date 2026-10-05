@@ -175,7 +175,7 @@
           && !Array.from(node.querySelectorAll?.(USER_TURN_MESSAGE_SELECTOR) || []).some(isCurrentUserMessage)));
     }
 
-    return Object.freeze({ getTurnNodes, getTurnNodesFromMatches, requestTurnRecords, currentAssistantNode, currentTurnContainer, currentTurnIdentity, getFinalAssistantNode, currentTurnKey, selectAssistantForSubmittedUser, turnKey, isCurrentAssistantNode, isCurrentUserMessage, turnRole });
+    return Object.freeze({ getTurnNodes, getTurnNodesFromMatches, requestTurnRecords, currentAssistantNode, currentTurnContainer, currentTurnIdentity, getFinalAssistantNode, currentTurnKey, selectAssistantForSubmittedUser, turnKey, isCurrentAssistantNode, isCurrentUserMessage, turnRole, hasResponseText });
   }
 
   globalThis.ChatGptCurrentTurnDom = Object.freeze({ createCurrentTurnDom, TURN_SELECTOR });
