@@ -107,6 +107,7 @@ test('assistant-turn marker with only a thought-duration control does not finali
 
   assert.equal(result.answer, '');
   assert.equal(result.format, 'none');
+  assert.equal(result.phase, 'ASSISTANT_PLACEHOLDER');
 });
 
 test('legacy assistant section with only a thought-duration control stays non-final', async () => {
@@ -127,4 +128,5 @@ test('legacy assistant section with only a thought-duration control stays non-fi
 
   assert.equal(result.answer, '');
   assert.equal(result.format, 'none');
+  assert.equal(result.phase, 'ASSISTANT_PLACEHOLDER');
 });
