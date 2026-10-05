@@ -155,6 +155,7 @@
     'request.resume': define(CommandScope.REQUEST, CommandMode.RESULT, CommandOperation.READ, 'always', 'request_projection', validators.none, recovery(CommandReloadRecovery.SAFE_REPEAT)),
     'request.effect.reconcile': define(CommandScope.REQUEST, CommandMode.RESULT, CommandOperation.READ, 'always', 'effect_evidence', validators.effectReconcile, recovery(CommandReloadRecovery.SAFE_REPEAT)),
     'response.snapshot.request': define(CommandScope.REQUEST, CommandMode.RESULT, CommandOperation.READ, 'always', 'request_projection', validators.none, recovery(CommandReloadRecovery.SAFE_REPEAT)),
+    'tab.observation.refresh': define(CommandScope.STANDALONE, CommandMode.RESULT, CommandOperation.READ, 'always', 'tab_observation', validators.none, recovery(CommandReloadRecovery.OBSERVATION, { allowDuringLease: true })),
 
     'command.cancel': define(CommandScope.STANDALONE, CommandMode.RESULT, CommandOperation.CONTROL, 'if_unconfirmed', 'target_command', validators.commandCancel, recovery(CommandReloadRecovery.TARGET_COMMAND, { allowDuringLease: true })),
     'passive.prompt.submit': define(CommandScope.STANDALONE, CommandMode.RESULT, CommandOperation.WRITE, 'never', 'submitted_turn', validators.passivePrompt, recovery(CommandReloadRecovery.OBSERVATION)),

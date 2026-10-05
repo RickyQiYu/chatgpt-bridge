@@ -371,6 +371,15 @@ export class MockExtensionTab extends EventEmitter {
           observation: this.createObservation(),
         });
       }
+      if (type === 'tab.observation.refresh') {
+        const reason = text(body.reason) || 'bridge.prompt_admission';
+        await this.publishObservation(reason);
+        const observation = this.createObservation();
+        return await this.#result(envelope, 'tab.observation.refreshed', {
+          revision: observation.revision,
+          observedAt: observation.observedAt,
+        });
+      }
       if (type === 'request.effect.reconcile') {
         const record = this.effectJournal.get(text(body.effectId)) || null;
         return await this.#result(envelope, 'request.effect.reconciled', record?.status === 'succeeded'

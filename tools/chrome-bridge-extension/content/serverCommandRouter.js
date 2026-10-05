@@ -30,6 +30,7 @@
     'efforts.list': 'handleEffortsList',
     'intelligence.apply': 'handleIntelligenceApply',
     'composer.attachments.clear': 'handleComposerAttachmentsClear',
+    'tab.observation.refresh': 'handleTabObservationRefresh',
   });
   const ROUTED_COMMAND_TYPES = Object.freeze([...Object.keys(COMMAND_HANDLER_DEPENDENCIES), 'command.cancel']);
 

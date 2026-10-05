@@ -6,6 +6,7 @@ export const LOCAL_E2E_COMMAND_TYPES = Object.freeze([
   'request.resume',
   'request.effect.reconcile',
   'response.snapshot.request',
+  'tab.observation.refresh',
   'command.cancel',
   'passive.prompt.submit',
   'sessions.list',

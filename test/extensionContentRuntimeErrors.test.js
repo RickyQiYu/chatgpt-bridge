@@ -11,7 +11,7 @@ const routerHandlerDependencies = [
   'handleBrowserTabIdentify', 'handleBrowserTabClose', 'handleBrowserOwnedTabClose', 'handleBrowserTabReload', 'handleLayoutCapture',
   'handleExtensionReload', 'handleArtifactFetch', 'handleResponseSnapshotRequest', 'handleResponseRecoverLatest',
   'handleResponseRecoverTurnKey', 'handleResponseRecoverList', 'handleModelsList', 'handleEffortsList',
-  'handleIntelligenceApply', 'handleComposerAttachmentsClear',
+  'handleIntelligenceApply', 'handleComposerAttachmentsClear', 'handleTabObservationRefresh',
 ];
 
 function completeRouterDeps(overrides = {}) {
@@ -53,6 +53,40 @@ test('server command router converts rejected async handlers into correlated com
   assert.equal(sent[0].commandId, 'command-reconcile-runtime-error');
   assert.equal(sent[0].requestId, 'request-runtime-error');
   assert.equal(sent[0].message, "Cannot read properties of undefined (reading 'length')");
+});
+
+test('server command router dispatches standalone tab observation refresh and preserves its correlated result', async () => {
+  const { sandbox } = await bootstrapExtensionContentRuntime();
+  const sent = [];
+  const refreshes = [];
+  const router = sandbox.ChatGptServerCommandRouter.createServerCommandRouter(completeRouterDeps({
+    send(payload) { sent.push(payload); },
+    handleTabObservationRefresh: async ({ commandId, reason }) => {
+      refreshes.push({ commandId, reason });
+      sent.push({
+        type: 'tab.observation.refreshed',
+        commandId,
+        revision: 8,
+        observedAt: 12345,
+      });
+    },
+  }));
+
+  router.handleServerMessage({
+    type: 'tab.observation.refresh',
+    commandScope: 'standalone',
+    commandId: 'refresh-tab-observation',
+    reason: 'bridge.prompt_admission',
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(refreshes, [{ commandId: 'refresh-tab-observation', reason: 'bridge.prompt_admission' }]);
+  assert.deepEqual(sent, [{
+    type: 'tab.observation.refreshed',
+    commandId: 'refresh-tab-observation',
+    revision: 8,
+    observedAt: 12345,
+  }]);
 });
 
 
