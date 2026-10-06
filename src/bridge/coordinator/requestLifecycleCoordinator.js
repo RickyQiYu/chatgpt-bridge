@@ -29,7 +29,7 @@ import { canonicalGenerationActive, isRequestRuntimeFinished } from './requestRu
  * canonical state materialization, and promise completion.
  */
 export class RequestLifecycleCoordinator {
-  constructor({ hub, pending, artifacts, eventBus = null, sendCommand, resumePrompt }) {
+  constructor({ hub, pending, artifacts, eventBus = null, sendCommand, resumePrompt, onRequestFinished }) {
     if (!hub || !pending || !artifacts || typeof sendCommand !== 'function') {
       throw new TypeError('RequestLifecycleCoordinator requires hub, pending, artifacts, and sendCommand');
     }
@@ -39,6 +39,7 @@ export class RequestLifecycleCoordinator {
     this.eventBus = eventBus;
     this.sendCommand = sendCommand;
     this.resumePrompt = typeof resumePrompt === 'function' ? resumePrompt : null;
+    this.onRequestFinished = typeof onRequestFinished === 'function' ? onRequestFinished : null;
     this.requestState = new CanonicalRequestState({ eventBus });
     this.effectRunner = new EffectRunner({
       handlers: {

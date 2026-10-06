@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { scheduleTerminalIdleLeaseRelease } from '../src/bridge/coordinator/terminalIdleLeaseRelease.js';
+import { RequestResultMaterializer } from '../src/bridge/coordinator/requestResultMaterializer.js';
 
 const requestId = 'turn-terminal-idle-release';
 const activeRequest = {
@@ -31,11 +32,41 @@ function schedule(pending, releaseStaleRequestLease) {
 }
 
 test('releases an idle terminal lease after its pending request finishes', async () => {
-  const pending = new Map([[requestId, { requestId }]]);
+  const pending = new Map();
   const releases = [];
-  schedule(pending, async (...args) => { releases.push(args); return { status: 'confirmed' }; });
+  const releaseStaleRequestLease = async (...args) => {
+    releases.push(args);
+    return { status: 'confirmed' };
+  };
+  const owner = {
+    pending,
+    runtime: { clear() {} },
+    emitRequestEvent() {},
+    onRequestFinished(state) {
+      assert.equal(pending.has(state.requestId), false);
+      schedule(pending, releaseStaleRequestLease);
+    },
+  };
+  const materializer = new RequestResultMaterializer(owner);
+  const state = {
+    requestId,
+    runtime: { finished: false },
+    answer: '',
+    thinking: '',
+    progressText: '',
+    events: [],
+    followers: new Set(),
+    callbacks: {},
+    resolve() {},
+    reject() {},
+  };
+  pending.set(requestId, state);
 
-  queueMicrotask(() => pending.delete(requestId));
+  schedule(pending, releaseStaleRequestLease);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(releases.length, 0);
+
+  materializer.finish(state, null, 'final response');
   await new Promise((resolve) => setImmediate(resolve));
 
   assert.equal(releases.length, 1);

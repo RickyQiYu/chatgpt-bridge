@@ -19,6 +19,7 @@ import { BridgeCommandRegistry } from './bridge/coordinator/bridgeCommandRegistr
 import { RequestSubmissionCoordinator } from './bridge/coordinator/requestSubmissionCoordinator.js';
 import { RequestControlCoordinator } from './bridge/coordinator/requestControlCoordinator.js';
 import { StaleRequestReleaseCoordinator } from './bridge/coordinator/staleRequestReleaseCoordinator.js';
+import { scheduleTerminalIdleLeaseRelease } from './bridge/coordinator/terminalIdleLeaseRelease.js';
 import { PassivePromptService } from './bridge/passivePromptService.js';
 
 export { browserLaunchUrl } from './browserLaunch.js';
@@ -86,6 +87,23 @@ export class BrowserBridge {
       artifacts: this.#artifacts,
       eventBus: this.#eventBus,
       sendCommand: async (type, data, options) => await this.#sendCommand(type, data, options),
+      onRequestFinished: (state) => {
+        const client = Array.from(this.#hub.clients || []).find(
+          (candidate) => candidate?.id === String(state.clientId || ''),
+        );
+        if (!client) return;
+        scheduleTerminalIdleLeaseRelease({
+          pending: this.#pending,
+          releaseStaleRequestLease: async (identity, clientSnapshot) => await this.#staleRequestRelease.releaseStaleRequestLease(
+            identity,
+            { clientSnapshot },
+          ),
+          eventBus: this.#eventBus,
+          clientId: client.id,
+          client,
+          observation: client.tabObservation,
+        });
+      },
       resumePrompt: async (sourceClientId, payload, options = {}) => {
         const client = Array.from(this.#hub.clients || []).find((candidate) => candidate.id === sourceClientId);
         if (!client) throw new Error(`Browser extension client not found for prompt recovery: ${sourceClientId}`);
