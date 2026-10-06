@@ -9,7 +9,6 @@ export function scheduleTerminalIdleLeaseRelease({
   const activeRequest = observation?.activeRequest || null;
   const sourceClientId = String(clientId || '');
   if (typeof releaseStaleRequestLease !== 'function' || !activeRequest?.requestId || !sourceClientId) return;
-  if (pending.has(String(activeRequest.requestId))) return;
   if (observation.composer?.primaryAction !== 'voice'
       || observation.composer?.ready !== true
       || observation.composer?.hasDraft !== false
@@ -26,6 +25,10 @@ export function scheduleTerminalIdleLeaseRelease({
   if (!identity.leaseId || !identity.ownerServerInstanceId || !Number.isSafeInteger(identity.responseEpoch)) return;
 
   setImmediate(() => {
+    // The final idle observation can arrive before the request materializer
+    // removes its terminal request from `pending`. Defer this check until the
+    // next event-loop turn, then keep the lease while any live request remains.
+    if (pending.has(identity.requestId)) return;
     const clientSnapshot = { ...client, activeRequest, tabObservation: observation };
     Promise.resolve(releaseStaleRequestLease(identity, clientSnapshot)).catch((error) => {
       eventBus?.emitDebug({
