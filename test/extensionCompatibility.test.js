@@ -96,9 +96,9 @@ test('candidate package and extension versions match the next patch set', async 
   const content = await fs.readFile(path.join(root, 'content.js'), 'utf8');
   const contentVersion = content.match(/CONTENT_SCRIPT_VERSION = '([^']+)'/)?.[1] || '';
 
-  assert.equal(packageMetadata.version, '6.4.10');
-  assert.equal(packageLock.version, '6.4.10');
-  assert.equal(packageLock.packages[''].version, '6.4.10');
+  assert.equal(packageMetadata.version, '6.4.11');
+  assert.equal(packageLock.version, '6.4.11');
+  assert.equal(packageLock.packages[''].version, '6.4.11');
   assert.equal(EXTENSION_COMPATIBILITY.minExtensionVersion, '2.4.15');
   assert.equal(EXTENSION_COMPATIBILITY.recommendedExtensionVersion, '2.4.15');
   assert.equal(EXTENSION_COMPATIBILITY.minContentVersion, '4.4.15');
