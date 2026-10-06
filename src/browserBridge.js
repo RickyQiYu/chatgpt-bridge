@@ -129,6 +129,7 @@ export class BrowserBridge {
       serverInstanceId: this.#serverInstanceId,
       pending: this.#pending,
       isReleasePending: (clientId) => this.#commandRegistry.isReleasePending(clientId),
+      hasPendingCommandForClient: (clientId) => this.#commandRegistry.hasPendingForClient(clientId),
       getCanonicalRequestState: (requestId) => this.#lifecycle.getState(requestId),
       sendCommand: async (type, data, options) => await this.#sendCommand(type, data, options),
       observationFreshnessMs: config.clientStaleMs,

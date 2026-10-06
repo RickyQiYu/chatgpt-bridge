@@ -40,6 +40,7 @@ function makeHarness(options = {}) {
       document: { pageReady: true, chatMainReady: true },
       generation: { state: options.generationState || 'stopped' },
       activeRequest: tabProjection,
+      boundLeaseProjection: { ...tabProjection },
     },
     ...options.client,
   };
@@ -70,9 +71,11 @@ function makeHarness(options = {}) {
     serverInstanceId: options.serverInstanceId || 'server-current',
     pending,
     isReleasePending: () => Boolean(options.releasePending),
+    hasPendingCommandForClient: () => Boolean(options.pendingCommand),
     getCanonicalRequestState: (requestId) => requestId === state?.requestId ? state : null,
     sendCommand: async (...args) => {
       calls.push(args);
+      if (typeof options.onSendCommand === 'function') return await options.onSendCommand(...args);
       if (options.sendCommandError) throw options.sendCommandError;
       return options.sendCommandResult === undefined
         ? { type: 'lease.released', released: true }
@@ -123,6 +126,59 @@ test('releases one exact current-owner terminal lease after lease.released', asy
       responseEpoch: h.releaseIdentity.responseEpoch,
     },
   });
+});
+
+test('refreshes a stale exact terminal lease observation before release', async () => {
+  const h = makeHarness();
+  h.client.tabObservation.observedAt = NOW - FRESHNESS_MS - 1;
+  const staleClientSnapshot = {
+    ...h.client,
+    tabObservation: { ...h.client.tabObservation },
+  };
+  h.coordinator.sendCommand = async (...args) => {
+    h.calls.push(args);
+    if (args[0] === 'tab.observation.refresh') {
+      h.client.tabObservation = {
+        ...h.client.tabObservation,
+        revision: 8,
+        observedAt: NOW - 1,
+        stableForMs: 1_200,
+      };
+      return { type: 'command.result', resultType: 'tab.observation.refreshed' };
+    }
+    return { type: 'lease.released', released: true };
+  };
+
+  const outcome = await h.coordinator.releaseStaleRequestLease(
+    h.releaseIdentity,
+    { clientSnapshot: staleClientSnapshot },
+  );
+
+  assert.equal(outcome.status, 'confirmed');
+  assert.deepEqual(h.calls.map(([type]) => type), ['tab.observation.refresh', 'request.release']);
+  assert.deepEqual(h.calls[0][1], { reason: 'stale_lease_release' });
+  assert.equal(h.calls[0][2].sourceClientId, h.releaseIdentity.clientId);
+  assert.equal(h.calls[1][1].requestId, h.releaseIdentity.requestId);
+});
+
+test('does not refresh a stale observation while the canonical request is active', async () => {
+  const h = makeHarness({ canonicalState: makeCanonical(identity(), { lifecycle: 'generating', terminal: null }) });
+  h.client.tabObservation.observedAt = NOW - FRESHNESS_MS - 1;
+
+  const outcome = await h.coordinator.releaseStaleRequestLease(h.releaseIdentity);
+
+  assert.equal(outcome.status, 'rejected');
+  assert.equal(h.calls.length, 0);
+});
+
+test('does not refresh a stale observation while a Bridge command is pending', async () => {
+  const h = makeHarness({ pendingCommand: true });
+  h.client.tabObservation.observedAt = NOW - FRESHNESS_MS - 1;
+
+  const outcome = await h.coordinator.releaseStaleRequestLease(h.releaseIdentity);
+
+  assert.equal(outcome.status, 'rejected');
+  assert.equal(h.calls.length, 0);
 });
 
 test('recovers one exact prior-owner lease without canonical state only with a fresh idle observation', async () => {
@@ -236,7 +292,7 @@ test('requires a fresh Voice primary control before releasing a stale lease', as
   assert.equal(voiceWithDraft.calls.length, 0);
 });
 
-test('rejects stale, future-dated, and malformed observations', async (t) => {
+test('refreshes stale or malformed observation timestamps but never releases without fresh idle readback', async (t) => {
   const invalidObservations = [
     { observerId: 'observer-1', revision: 7, observedAt: NOW - FRESHNESS_MS - 1, generation: { state: 'idle' } },
     { observerId: 'observer-1', revision: 7, observedAt: NOW + 1, generation: { state: 'idle' } },
@@ -262,7 +318,8 @@ test('rejects stale, future-dated, and malformed observations', async (t) => {
       });
       const outcome = await h.coordinator.releaseStaleRequestLease(h.releaseIdentity);
       assert.equal(outcome.status, 'rejected');
-      assert.equal(h.calls.length, 0);
+      assert.equal(h.calls.filter(([type]) => type === 'request.release').length, 0);
+      assert.equal(h.calls.filter(([type]) => type === 'tab.observation.refresh').length, observation.generation.state === 'unknown' ? 0 : 1);
     });
   }
 });
