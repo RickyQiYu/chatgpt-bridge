@@ -195,6 +195,15 @@ export class RequestResultMaterializer {
     if (!markRequestRuntimeFinished(state)) return;
     this.cleanupState(state);
     owner.pending.delete(state.requestId);
+    try {
+      owner.onRequestFinished?.(state);
+    } catch (error) {
+      owner.eventBus?.emitDebug({
+        type: 'request.terminal_idle_release.schedule_failed',
+        requestId: state.requestId,
+        data: { message: String(error?.message || error || 'Terminal lease cleanup scheduling failed') },
+      });
+    }
 
     if (err) {
       const eventType = err.recoverable || metadata.finishReason === 'recoverable_failed' ? 'request.recoverable_failed' : 'request.error';
