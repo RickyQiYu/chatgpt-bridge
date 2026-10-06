@@ -33,7 +33,10 @@ export function registerLocalReleaseRoutes(router, bridge) {
         res.status(500).json({ status: 'error' });
         return;
       }
-      res.status(httpStatus).json({ status });
+      const reason = /^[a-z][a-z0-9_]{0,79}$/.test(String(outcome?.reason || ''))
+        ? String(outcome.reason)
+        : '';
+      res.status(httpStatus).json(reason ? { status, reason } : { status });
     } catch {
       logError('Local stale request lease recovery failed');
       res.status(500).json({ status: 'error' });
