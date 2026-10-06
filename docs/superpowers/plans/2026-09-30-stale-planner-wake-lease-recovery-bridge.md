@@ -12,6 +12,13 @@
 
 Live natural wake `155/177` exposed a command-identity gap: the background had already persisted a `request.release` command for the exact lease, while stale recovery generated a different command ID. The background correctly rejected the new ID before dispatch, but Protocol 5 normalized the response to `command.error` and the release registry ignored it. Bridge then timed out and marked the lease attempt as spent. The follow-up keeps the one-physical-dispatch boundary: the background returns the exact persisted command ID on this pre-dispatch conflict, and Bridge adopts/retries only that ID. The coordinator retains that ID for later idempotent reconciliation.
 
+
+## Follow-up finding — 2026-10-06 active child gate
+
+The next natural due pair 157/179 reached the extension but was rejected before physical release with BROWSER_TAB_LEASED and reason lease_children_active. The background reducer found request-scoped active children and correctly kept the lease. The Bridge router previously emitted this rejection without a preDispatchRejected marker, so BridgeCommandRegistry left the command pending and retries obscured the bounded reason.
+
+The current source candidate marks only the failed lease.release_recover transition as a typed pre-dispatch rejection, preserving exact request/lease/server/epoch identity and the bounded reducer reason. Bridge settles the command attempt but does not mark the lease released. Focused regressions prove that active-child rejection leaves the lease quarantined and command/effect side effects absent. Live child-ledger readback is still required before any cleanup can succeed. The Mac UI is locked, so this inspection awaits user unlock; do not delete extension storage or bypass activeRequestChildren.
+
 ---
 
 ## Scope boundary

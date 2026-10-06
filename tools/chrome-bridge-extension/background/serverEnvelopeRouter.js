@@ -1,6 +1,7 @@
 import '../shared/commandManifest.js';
 import { MessageType } from './protocolV5.js';
 import { matchingPersistedRequestIdentity } from './stateV6Core.js';
+import { rejectCommand } from './commandRejection.js';
 
 function commandDefinition(commandType = '') {
   return globalThis.ChatGptBridgeCommandManifest?.commandDefinition?.(commandType) || null;
@@ -307,6 +308,8 @@ async function handleCommand(deps) {
       state, envelope, payload, sendProtocolMessage,
       message: `Stale release recovery rejected: ${recovered.reason}`,
       code: recovered.reason === 'lease_mismatch' ? 'BROWSER_TAB_LEASE_MISMATCH' : 'BROWSER_TAB_LEASED',
+      preDispatchRejected: true,
+      reasonCode: recovered.reason,
     });
     await flushCriticalOutbox(state);
     scheduleReleaseDeadline?.(state, commandId, Number(payload.releaseCleanupTimeoutMs) || 8_000);
@@ -460,36 +463,4 @@ async function registerAndDispatchCommand({ state, envelope, payload, background
     commandScope: scope, commandMode: mode, leaseId: request?.leaseId || '', ownerServerInstanceId: request?.ownerServerInstanceId || '',
     protocolMessageId: envelope.messageId,
   } });
-}
-
-async function rejectCommand({
-  state,
-  envelope,
-  payload,
-  sendProtocolMessage,
-  message,
-  code = 'BROWSER_COMMAND_REJECTED',
-  preDispatchRejected = false,
-  existingCommandId = '',
-}) {
-  const request = envelope.request || null;
-  const body = {
-    commandId: payload.commandId,
-    requestId: request?.requestId || '',
-    code,
-    message,
-    error: message,
-  };
-  if (preDispatchRejected) {
-    body.preDispatchRejected = true;
-    if (request) {
-      body.leaseId = String(request.leaseId || '');
-      body.ownerServerInstanceId = String(request.ownerServerInstanceId || '');
-      body.responseEpoch = Number(request.responseEpoch) || 0;
-    }
-  }
-  if (existingCommandId) body.existingCommandId = String(existingCommandId);
-  await sendProtocolMessage(state, MessageType.COMMAND_REJECTED, {
-    ...body,
-  }, { commandId: payload.commandId, causationId: envelope.messageId, lease: envelope.request || null });
 }

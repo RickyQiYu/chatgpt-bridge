@@ -310,7 +310,11 @@ export class StaleRequestReleaseCoordinator {
           } else if (!validExistingCommandId) {
             this.releaseCommandIds.delete(releaseKey);
           }
-          return rejected(validExistingCommandId ? 'release_command_identity_conflict' : 'release_rejected_before_dispatch');
+          const reasonCode = String(error?.reasonCode || '').trim();
+          const safeReasonCode = /^[a-z][a-z0-9_]{0,79}$/.test(reasonCode)
+            ? reasonCode
+            : 'release_rejected_before_dispatch';
+          return rejected(validExistingCommandId ? 'release_command_identity_conflict' : safeReasonCode);
         }
         return {
           status: 'ambiguous',

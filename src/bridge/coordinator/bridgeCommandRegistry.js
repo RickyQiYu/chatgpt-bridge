@@ -89,17 +89,20 @@ export class BridgeCommandRegistry {
       && releaseIdentityMatches
       && /^[A-Za-z0-9._~-]{1,128}$/.test(existingReleaseCommandId)
       && existingReleaseCommandId !== command.commandId;
+    const exactLeasePreDispatchRejection = releaseIdentityMatches;
     const quarantineRejection = payload.code === 'BROWSER_TAB_QUARANTINED'
       && String(payload.requestId || '') === String(command.request?.requestId || '');
     if (command.mode === 'release'
       && ['command.error', 'command.rejected'].includes(payload.type)
       && payload.preDispatchRejected === true
-      && (exactExistingRelease || quarantineRejection)) {
+      && (exactLeasePreDispatchRejection || quarantineRejection)) {
       this.#remove(payload.commandId);
       const error = new Error(payload.message || 'Browser rejected the release before dispatch');
       error.code = payload.code;
       error.preDispatchRejected = true;
       if (exactExistingRelease) error.existingCommandId = existingReleaseCommandId;
+      const reasonCode = String(payload.reasonCode || '').trim();
+      if (/^[a-z][a-z0-9_]{0,79}$/.test(reasonCode)) error.reasonCode = reasonCode;
       command.reject(error);
       return true;
     }

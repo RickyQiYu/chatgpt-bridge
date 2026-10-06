@@ -446,6 +446,19 @@ test('reconciles an ambiguous release using the same exact persisted command ID'
   ]);
 });
 
+test('preserves a typed pre-dispatch child-gate reason without claiming release', async () => {
+  const error = new Error('Stale release recovery rejected: lease_children_active');
+  error.preDispatchRejected = true;
+  error.reasonCode = 'lease_children_active';
+  const h = makeHarness({ onSendCommand: async () => { throw error; } });
+
+  const outcome = await h.coordinator.releaseStaleRequestLease(h.releaseIdentity);
+
+  assert.equal(outcome.status, 'rejected');
+  assert.equal(outcome.reason, 'lease_children_active');
+  assert.equal(h.calls.length, 1);
+});
+
 test('a validated current observation may replace the stale cached tab observation for one release decision', async () => {
   const h = makeHarness({ client: { tabObservation: {
     observerId: 'observer-old', revision: 6, observedAt: NOW - 500,

@@ -2,25 +2,22 @@
 
 ## Current source candidates (not deployed)
 
-- Bridge package: `6.4.13`.
-- Extension manifest: `2.4.16`.
-- Content runtime: `4.4.16`.
-- Extension protocol: `5` only.
-- Background persistence schema: `6` only.
-- Workflow runtime schema: `3` only.
-- Interactive dependency: exact `terlio.js@1.2.1`.
-- npm packages use the public npm registry; Zipflow uses a pinned public GitHub codeload archive.
+- Bridge package: 6.4.14.
+- Extension manifest: 2.4.17.
+- Content runtime: 4.4.17.
+- Extension protocol: 5 only.
+- Background persistence schema: 6 only.
+- Workflow runtime schema: 3 only.
 
-These versions are source candidates in this checkout only. The live canary is still Bridge `6.4.12` with extension `2.4.15` / content `4.4.15`; update files are prepared but the Chrome extension has not been reloaded from the locked Mac session.
+The checked-in candidate adds typed, exact pre-dispatch results for lease recovery rejections. It carries bounded reason codes and full request/lease/server/epoch identity to Bridge; it settles only the command wait and never clears the background lease.
 
-Natural wake pairs `154/176` and `155/177` completed in their original sessions and wrote valid checkpoints; both had `ambiguous_send=false`. The same-instance release still failed after `155/177`: debug events showed `BROWSER_TAB_LEASED`, and the next exact recovery returned `release_already_attempted` despite fresh idle observations.
+The live canary remains Bridge 6.4.13 with extension 2.4.16/content 4.4.16. The newer bundle has not been installed or reloaded because the Mac UI is currently locked. Do not restart the canary to 6.4.14 until extension 2.4.17 is active.
 
-The `6.4.13` source candidate reports the exact persisted release command ID on a typed pre-dispatch identity conflict. Bridge accepts the response only when client, request, lease, server instance, and response epoch match, then continues only that command ID. The extension remains the sole physical release owner. Full `npm test` passes (**1,442 passed, 2 skipped**), `npm run check` passes, and `npm run check:quality` reports the repository's 11 existing line-count warnings below the hard limit.
+Natural wakes 156/178 completed in their canonical sessions with valid checkpoints and ambiguous_send=false. The due pair 157/179 failed closed: the extension reports BROWSER_TAB_LEASED with reason lease_children_active. Both turns are final and composers are empty, but the extension background still records active lease children. Bridge currently has two pending release commands, zero active requests, and zero pending requests. Do not clear storage, cancel children, or bypass the lease_children_active gate before reading the exact extension child ledger.
 
-Codex dispatch configuration permits Governance and Voice Terminal. The host worker's private `workspace_map` now includes both projects, using a clean Voice Terminal worktree at `origin/main`; `doctor` reports ready. Both LaunchAgents remain on their 60-second/30-second schedules, but authenticated GitHub polling is blocked by the invalid local `gh` token. The normal `dispatch` queue has no eligible issue; host issue approval gates remain unchanged. Finish extension reload and GitHub reauthentication after the user unlocks the Mac.
+The latest source changes distinguish a typed pre-dispatch child-gate rejection from an ambiguous release. Full npm test passes (1,446 passed, 2 skipped); npm run check passes for 612 JavaScript files and package contents; npm run check:quality exits 0 with 11 below-hard-limit warnings; git diff --check passes. PR #14 remains open; its currently deployed canary does not include this follow-up.
 
-The `6.4.7` source candidate covers multiline prompt verification, partial ProseMirror fallback, and current-turn marker selection when the marker sits beside a thought-duration control. Regression coverage confirms the complete Markdown answer/footer is retained for keyed and canonical-message paths, thought-only controls remain `ASSISTANT_PLACEHOLDER` in keyed and legacy wrappers, and image-only Markdown responses remain final. `npm test` passes (1,427 passed, 2 skipped); `npm run check` passes; `npm run check:quality` passes with the repository's 11 over-target line-count warnings, all below the hard limit; and `git diff --check` passes. A local live run of the prior `6.4.6` candidate proved `prompt.sent` for both wake sessions but found the Bridge's final observation reduced each Planner reply to its thought-duration control; checkpoint return remained pending. No live deployment of this `6.4.7` candidate has been performed.
-
+Codex dispatch configuration permits Governance and Voice Terminal, the worker source is at accepted Governance main 93b24ab2, and GitHub CLI authenticated calls succeed. The canonical normal dispatch queue is empty. The host worker doctor is ready and its 30-second LaunchAgent continues polling; #633 remains ambiguous/non-retryable and #637 remains invalid because its body digest differs from its seal and it lacks a valid approval. No host/device operation is authorized by this task.
 ## Historical session notes
 
 The versioned entries below record earlier source changes and verification results; they do not describe the current live installation.
