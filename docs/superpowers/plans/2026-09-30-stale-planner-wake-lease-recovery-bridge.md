@@ -8,6 +8,10 @@
 
 **Tech Stack:** Node.js 20+, JavaScript ES modules, Chrome extension Manifest V3, Protocol 5, `node:test`.
 
+## Follow-up finding — 2026-10-06
+
+Live natural wake `155/177` exposed a command-identity gap: the background had already persisted a `request.release` command for the exact lease, while stale recovery generated a different command ID. The background correctly rejected the new ID before dispatch, but Protocol 5 normalized the response to `command.error` and the release registry ignored it. Bridge then timed out and marked the lease attempt as spent. The follow-up keeps the one-physical-dispatch boundary: the background returns the exact persisted command ID on this pre-dispatch conflict, and Bridge adopts/retries only that ID. The coordinator retains that ID for later idempotent reconciliation.
+
 ---
 
 ## Scope boundary
@@ -117,7 +121,7 @@ Expected: module/API resolution fails until the coordinator exists.
 
 - [x] **Step 3: Implement exact identity and pre-release checks**
 
-Require exactly `requestId`, `clientId`, `leaseId`, `ownerServerInstanceId`, and safe non-negative `responseEpoch`. Require one ready compatible candidate and exact equality between the client `activeRequest` and tab-observation `activeRequest`. Require a current observation with non-empty `observerId`, positive `revision`, a non-future `observedAt` within the configured freshness limit, and generation `idle` or `stopped`. Require no Bridge pending request or release barrier. If a canonical request state exists, require its source lease/server/epoch to match exactly and require that state to be terminal, regardless of owner. If the old owner has no surviving canonical state after a Bridge restart, allow only the exact persisted lease identity plus the same fresh idle observation. Pass `clientId` only as `sourceClientId`; the Protocol request identity contains only `requestId`, `leaseId`, `ownerServerInstanceId`, and `responseEpoch`. Send exactly one canonical `request.release`; return `confirmed` only for `lease.released`, `ambiguous` for any unconfirmed outcome, and `rejected` for failed preconditions. Do not retry and do not synthesize a terminal lifecycle transition.
+Require exactly `requestId`, `clientId`, `leaseId`, `ownerServerInstanceId`, and safe non-negative `responseEpoch`. Require one ready compatible candidate and exact equality between the client `activeRequest` and tab-observation `activeRequest`. Require a current observation with non-empty `observerId`, positive `revision`, a non-future `observedAt` within the configured freshness limit, and generation `idle` or `stopped`. Require no Bridge pending request or release barrier. If a canonical request state exists, require its source lease/server/epoch to match exactly and require that state to be terminal, regardless of owner. If the old owner has no surviving canonical state after a Bridge restart, allow only the exact persisted lease identity plus the same fresh idle observation. Pass `clientId` only as `sourceClientId`; the Protocol request identity contains only `requestId`, `leaseId`, `ownerServerInstanceId`, and `responseEpoch`. Send one canonical `request.release`. If the background proves that an exact release command is already persisted, adopt and retry only that command ID; an ambiguous retry may be reconciled with that same ID. Return `confirmed` only for `lease.released`, `ambiguous` for an unconfirmed result, and `rejected` for failed preconditions. Never synthesize a terminal lifecycle transition or dispatch a second physical release.
 
 - [x] **Step 4: Wire the coordinator through the Bridge facade and pass the tests**
 

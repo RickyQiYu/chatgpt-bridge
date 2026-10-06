@@ -79,15 +79,27 @@ export class BridgeCommandRegistry {
       return true;
     }
 
+    const releaseIdentityMatches = Boolean(command.request
+      && String(payload.requestId || '') === String(command.request.requestId || '')
+      && String(payload.leaseId || '') === String(command.request.leaseId || '')
+      && String(payload.ownerServerInstanceId || '') === String(command.request.ownerServerInstanceId || '')
+      && Number(payload.responseEpoch) === Number(command.request.responseEpoch));
+    const existingReleaseCommandId = String(payload.existingCommandId || '').trim();
+    const exactExistingRelease = payload.code === 'BROWSER_TAB_LEASED'
+      && releaseIdentityMatches
+      && /^[A-Za-z0-9._~-]{1,128}$/.test(existingReleaseCommandId)
+      && existingReleaseCommandId !== command.commandId;
+    const quarantineRejection = payload.code === 'BROWSER_TAB_QUARANTINED'
+      && String(payload.requestId || '') === String(command.request?.requestId || '');
     if (command.mode === 'release'
-      && payload.type === 'command.rejected'
+      && ['command.error', 'command.rejected'].includes(payload.type)
       && payload.preDispatchRejected === true
-      && payload.code === 'BROWSER_TAB_QUARANTINED'
-      && String(payload.requestId || '') === String(command.request?.requestId || '')) {
+      && (exactExistingRelease || quarantineRejection)) {
       this.#remove(payload.commandId);
-      const error = new Error(payload.message || 'Browser rejected the stale release before dispatch');
+      const error = new Error(payload.message || 'Browser rejected the release before dispatch');
       error.code = payload.code;
       error.preDispatchRejected = true;
+      if (exactExistingRelease) error.existingCommandId = existingReleaseCommandId;
       command.reject(error);
       return true;
     }

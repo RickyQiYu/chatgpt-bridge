@@ -73,6 +73,7 @@ function makeHarness(options = {}) {
     isReleasePending: () => Boolean(options.releasePending),
     hasPendingCommandForClient: () => Boolean(options.pendingCommand),
     getCanonicalRequestState: (requestId) => requestId === state?.requestId ? state : null,
+    createReleaseCommandId: options.createReleaseCommandId || (() => 'release-generated-command'),
     sendCommand: async (...args) => {
       calls.push(args);
       if (typeof options.onSendCommand === 'function') return await options.onSendCommand(...args);
@@ -119,6 +120,7 @@ test('releases one exact current-owner terminal lease after lease.released', asy
   assert.deepEqual(options, {
     sourceClientId: h.releaseIdentity.clientId,
     timeoutMs: 10_000,
+    commandId: 'release-generated-command',
     request: {
       requestId: h.releaseIdentity.requestId,
       leaseId: h.releaseIdentity.leaseId,
@@ -126,6 +128,33 @@ test('releases one exact current-owner terminal lease after lease.released', asy
       responseEpoch: h.releaseIdentity.responseEpoch,
     },
   });
+});
+
+test('continues an exact persisted release command ID after a pre-dispatch identity conflict', async () => {
+  let sendCount = 0;
+  const h = makeHarness({
+    createReleaseCommandId: () => 'release-generated-command',
+    onSendCommand: async () => {
+      sendCount += 1;
+      if (sendCount === 1) {
+        const error = new Error('a different release command is already persisted');
+        error.preDispatchRejected = true;
+        error.existingCommandId = 'release-persisted-command';
+        throw error;
+      }
+      return { type: 'lease.released', released: true };
+    },
+  });
+
+  const outcome = await h.coordinator.releaseStaleRequestLease(h.releaseIdentity);
+
+  assert.equal(outcome.status, 'confirmed');
+  assert.deepEqual(h.calls.map(([, , options]) => options.commandId), [
+    'release-generated-command',
+    'release-persisted-command',
+  ]);
+  assert.equal(h.calls.every(([type, payload]) => type === 'request.release'
+    && payload.requestId === h.releaseIdentity.requestId), true);
 });
 
 test('refreshes a stale exact terminal lease observation before release', async () => {
@@ -386,7 +415,7 @@ test('rejects a release while the client release barrier is pending', async () =
   assert.equal(h.calls.length, 0);
 });
 
-test('returns ambiguous when release is unconfirmed and never retries', async () => {
+test('returns ambiguous when release is unconfirmed', async () => {
   const h = makeHarness({ sendCommandResult: { type: 'command.result', released: true } });
 
   const outcome = await h.coordinator.releaseStaleRequestLease(h.releaseIdentity);
@@ -395,16 +424,26 @@ test('returns ambiguous when release is unconfirmed and never retries', async ()
   assert.equal(h.calls.length, 1);
 });
 
-test('returns ambiguous when the release command rejects and never retries', async () => {
-  const h = makeHarness({ sendCommandResult: Promise.reject(new Error('timed out')) });
+test('reconciles an ambiguous release using the same exact persisted command ID', async () => {
+  let sendCount = 0;
+  const h = makeHarness({
+    createReleaseCommandId: () => 'release-stable-command',
+    onSendCommand: async () => {
+      sendCount += 1;
+      if (sendCount === 1) throw new Error('release acknowledgement timed out');
+      return { type: 'lease.released', released: true };
+    },
+  });
 
   const outcome = await h.coordinator.releaseStaleRequestLease(h.releaseIdentity);
   const repeated = await h.coordinator.releaseStaleRequestLease(h.releaseIdentity);
 
   assert.equal(outcome.status, 'ambiguous');
-  assert.equal(repeated.status, 'rejected');
-  assert.equal(repeated.reason, 'release_already_attempted');
-  assert.equal(h.calls.length, 1);
+  assert.equal(repeated.status, 'confirmed');
+  assert.deepEqual(h.calls.map(([, , options]) => options.commandId), [
+    'release-stable-command',
+    'release-stable-command',
+  ]);
 });
 
 test('a validated current observation may replace the stale cached tab observation for one release decision', async () => {

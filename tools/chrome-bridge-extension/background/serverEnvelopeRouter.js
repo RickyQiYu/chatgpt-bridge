@@ -264,6 +264,8 @@ async function handleCommand(deps) {
         state, envelope, payload, sendProtocolMessage,
         code: 'BROWSER_TAB_LEASED',
         message: 'A release command is already recorded for this exact request lease',
+        preDispatchRejected: true,
+        existingCommandId: existingReleaseCommand.commandId,
       });
     }
     if (existingReleaseCommand && existingReleaseCommand.status !== 'registered') {
@@ -460,8 +462,34 @@ async function registerAndDispatchCommand({ state, envelope, payload, background
   } });
 }
 
-async function rejectCommand({ state, envelope, payload, sendProtocolMessage, message, code = 'BROWSER_COMMAND_REJECTED' }) {
+async function rejectCommand({
+  state,
+  envelope,
+  payload,
+  sendProtocolMessage,
+  message,
+  code = 'BROWSER_COMMAND_REJECTED',
+  preDispatchRejected = false,
+  existingCommandId = '',
+}) {
+  const request = envelope.request || null;
+  const body = {
+    commandId: payload.commandId,
+    requestId: request?.requestId || '',
+    code,
+    message,
+    error: message,
+  };
+  if (preDispatchRejected) {
+    body.preDispatchRejected = true;
+    if (request) {
+      body.leaseId = String(request.leaseId || '');
+      body.ownerServerInstanceId = String(request.ownerServerInstanceId || '');
+      body.responseEpoch = Number(request.responseEpoch) || 0;
+    }
+  }
+  if (existingCommandId) body.existingCommandId = String(existingCommandId);
   await sendProtocolMessage(state, MessageType.COMMAND_REJECTED, {
-    commandId: payload.commandId, requestId: envelope.request?.requestId || '', code, message, error: message,
+    ...body,
   }, { commandId: payload.commandId, causationId: envelope.messageId, lease: envelope.request || null });
 }

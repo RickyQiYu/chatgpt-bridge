@@ -177,6 +177,34 @@ test('release command registry settles an explicit pre-dispatch rejection immedi
   } finally { registry.close(); }
 });
 
+test('release command registry returns an exact existing release command identity for safe continuation', async () => {
+  const delivered = [];
+  const registry = new BridgeCommandRegistry({ hub: {
+    sendToClientWithDelivery(clientId, payload, options) {
+      delivered.push({ clientId, payload, options });
+      return { client: { id: clientId }, delivered: Promise.resolve() };
+    },
+  } });
+  const request = { requestId: 'request-release-continue', leaseId: 'lease-release-continue', ownerServerInstanceId: 'prior-server', responseEpoch: 3 };
+  try {
+    const pending = registry.send('request.release', { type: 'request.release', recoveryMode: 'stale_lease' }, {
+      sourceClientId: 'tab-release-continue', commandId: 'release-new-command', request, timeoutMs: 10_000,
+    });
+    void pending.catch(() => {});
+    await waitFor(() => delivered.length === 1);
+    assert.equal(registry.handleResponse('tab-release-continue', {
+      type: 'command.error', commandId: 'release-new-command', requestId: request.requestId,
+      leaseId: request.leaseId, ownerServerInstanceId: request.ownerServerInstanceId, responseEpoch: request.responseEpoch,
+      code: 'BROWSER_TAB_LEASED', message: 'a persisted release command already exists',
+      preDispatchRejected: true, existingCommandId: 'release-persisted-command',
+    }), true);
+    await assert.rejects(pending, (error) => error.code === 'BROWSER_TAB_LEASED'
+      && error.preDispatchRejected === true
+      && error.existingCommandId === 'release-persisted-command');
+    assert.equal(registry.has('release-new-command'), false);
+  } finally { registry.close(); }
+});
+
 test('standalone result command never claims a lease and a valid prompt command atomically claims one with its first effect', async () => {
   const h = backgroundHarness();
   try {
@@ -502,6 +530,12 @@ test('stale request.release continues only the same persisted registered command
       sequence: 1, commandId: 'different-release-logical-command', type: 'request.release', request,
       payload: { recoveryMode: 'stale_lease' },
     }) });
+    const identityConflict = h.sent.find((entry) => entry.messageType === ExtensionMessageType.COMMAND_REJECTED
+      && entry.body.commandId === 'different-release-logical-command');
+    assert.equal(identityConflict?.body.code, 'BROWSER_TAB_LEASED');
+    assert.equal(identityConflict?.body.preDispatchRejected, true);
+    assert.equal(identityConflict?.body.existingCommandId, commandId);
+    assert.deepEqual(identityConflict?.request, request);
     await handleServerEnvelope({ ...h, envelope: serverEnvelope({
       sequence: 2, commandId, type: 'request.release', request: { ...request, responseEpoch: 1 },
       payload: { recoveryMode: 'stale_lease' },

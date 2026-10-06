@@ -2,18 +2,22 @@
 
 ## Current source candidates (not deployed)
 
-- Bridge package: `6.4.7`.
-- Extension manifest: `2.4.14`.
-- Content runtime: `4.4.14`.
+- Bridge package: `6.4.13`.
+- Extension manifest: `2.4.16`.
+- Content runtime: `4.4.16`.
 - Extension protocol: `5` only.
 - Background persistence schema: `6` only.
 - Workflow runtime schema: `3` only.
 - Interactive dependency: exact `terlio.js@1.2.1`.
 - npm packages use the public npm registry; Zipflow uses a pinned public GitHub codeload archive.
 
-These versions are source candidates in this checkout only. They are not deployed, and this handoff does not assert that they are installed in a live browser profile.
+These versions are source candidates in this checkout only. The live canary is still Bridge `6.4.12` with extension `2.4.15` / content `4.4.15`; update files are prepared but the Chrome extension has not been reloaded from the locked Mac session.
 
-Content runtime `4.4.14` reports the primary composer action and draft presence, then checks again before submitting a prompt. During asynchronous writes it follows the live composer node if ChatGPT replaces the DOM element. It accepts only the exact pending prompt or the original empty state; a different draft remains protected. Send/voice control lookup is scoped to the editor form and verified ChatGPT main surface, including localized Chinese voice controls. The MAIN-world setter requires full whitespace-normalized equality and clears partial editor blocks in its fallback. Current-turn discovery skips thought-duration controls at assistant turn markers and reads the final Markdown response body. The Bridge requires a fresh, stable Voice-idle observation with an empty composer before releasing a stale request lease. Send, Voice with draft text, Stop, and unknown states keep the tab unavailable. This source candidate is not deployed yet.
+Natural wake pairs `154/176` and `155/177` completed in their original sessions and wrote valid checkpoints; both had `ambiguous_send=false`. The same-instance release still failed after `155/177`: debug events showed `BROWSER_TAB_LEASED`, and the next exact recovery returned `release_already_attempted` despite fresh idle observations.
+
+The `6.4.13` source candidate reports the exact persisted release command ID on a typed pre-dispatch identity conflict. Bridge accepts the response only when client, request, lease, server instance, and response epoch match, then continues only that command ID. The extension remains the sole physical release owner. Full `npm test` passes (**1,442 passed, 2 skipped**), `npm run check` passes, and `npm run check:quality` reports the repository's 11 existing line-count warnings below the hard limit.
+
+Codex dispatch configuration permits Governance and Voice Terminal. The host worker's private `workspace_map` now includes both projects, using a clean Voice Terminal worktree at `origin/main`; `doctor` reports ready. Both LaunchAgents remain on their 60-second/30-second schedules, but authenticated GitHub polling is blocked by the invalid local `gh` token. The normal `dispatch` queue has no eligible issue; host issue approval gates remain unchanged. Finish extension reload and GitHub reauthentication after the user unlocks the Mac.
 
 The `6.4.7` source candidate covers multiline prompt verification, partial ProseMirror fallback, and current-turn marker selection when the marker sits beside a thought-duration control. Regression coverage confirms the complete Markdown answer/footer is retained for keyed and canonical-message paths, thought-only controls remain `ASSISTANT_PLACEHOLDER` in keyed and legacy wrappers, and image-only Markdown responses remain final. `npm test` passes (1,427 passed, 2 skipped); `npm run check` passes; `npm run check:quality` passes with the repository's 11 over-target line-count warnings, all below the hard limit; and `git diff --check` passes. A local live run of the prior `6.4.6` candidate proved `prompt.sent` for both wake sessions but found the Bridge's final observation reduced each Planner reply to its thought-duration control; checkpoint return remained pending. No live deployment of this `6.4.7` candidate has been performed.
 
