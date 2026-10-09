@@ -6,7 +6,7 @@
   if (!EXTENSION_API || !RUNTIME_CONFIG) throw new Error('ChatGPT extension runtime modules were not loaded before content.js');
   const { DEFAULT_CONFIG, readBrowserLaunchMetadataFromUrl, safeLaunchBridgeServerUrl } = RUNTIME_CONFIG;
   const INSTANCE_KEY = '__chatgptBrowserBridgeCompanionInstance';
-  const CONTENT_SCRIPT_VERSION = '4.4.15';
+  const CONTENT_SCRIPT_VERSION = '4.4.19';
   const EXTENSION_PROTOCOL_VERSION = 5;
   const EXTENSION_BUNDLE_ID = String(globalThis.ChatGptBridgeBuildIdentity?.bundleId || '');
   const CONTENT_EPOCH = `content-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
@@ -306,7 +306,7 @@
   });
   const {
     simpleHash, domPathForNode, getTurnNodes, turnKey, turnRole, getAssistantNodes, getAssistantNodeFromTurn, readUserTurnPromptText,
-    waitForSubmittedUserTurnAnchor, refreshRequestTurnAnchors, readLatestAssistantSnapshot, readAssistantSnapshotByTurnKey,
+    waitForSubmittedUserTurnAnchor, readCurrentSubmittedUserTurnAnchor, refreshRequestTurnAnchors, readLatestAssistantSnapshot, readAssistantSnapshotByTurnKey,
     readRecentAssistantSnapshots, readAssistantSnapshot, readAssistantNodeSnapshot, readSubmittedUserTurnError, attachDomObserver, collectAndEmit,
     releaseRequest, scheduleCollect, startDomMonitor, getCurrentSession,
     conversationIdFromUrl, handleSessionsList, handleSessionsNew, handleSessionsSelect, handleSessionsDelete,
@@ -399,6 +399,7 @@
     pagePresence,
     readIntelligenceState,
     readSubmittedUserTurnError,
+    readCurrentSubmittedUserTurnAnchor,
   });
   const { handlePassivePromptSubmit, handlePromptCancel, handlePromptSend, handlePromptSteer,
     handleRequestRelease, handleRequestResume, handleEffectReconcile } = requestCommandsApi;

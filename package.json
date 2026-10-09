@@ -1,6 +1,6 @@
 {
   "name": "chatgpt-browser-bridge-node",
-  "version": "6.4.11",
+  "version": "6.4.16",
   "description": "Local HTTP/OpenAI-compatible bridge for a logged-in ChatGPT tab using a Chrome/Chromium extension companion.",
   "type": "module",
   "main": "src/index.js",

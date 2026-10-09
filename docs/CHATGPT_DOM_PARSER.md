@@ -83,16 +83,38 @@ message roots in document order, resolving each message to exactly one owner.
 Sidebar, composer and extension-panel nodes never enter that list. Recovery does
 not scan unrelated Markdown for files or repeat discovery with another selector.
 
-Durable keys come only from `data-turn-id`, `data-turn-id-container` or
-`data-message-id`. Presentation-only message shapes remain readable, but have no
+Durable keys come only from native `data-turn-id`, `data-turn-id-container`,
+`data-message-id` or settled `data-turn-key` identifiers. The observed optimistic
+`pending-chatgpt-submit` key is not a durable identity. Submission waits for a
+currently present matching new user record; a stored projected key alone cannot
+prove that the user anchor still exists in the current DOM sample. Presentation-only message shapes remain readable, but have no
 request anchor without a native identifier. DOM indices, positional test IDs,
 content hashes and React node references cannot establish identity. Anonymous
 observations do not share persisted reasoning history. Semantic author attributes
 take precedence over presentation classes and screen-reader headings.
 
+For current keyed ChatGPT turns, a final assistant root can carry both
+`data-content-search-unit-key` and `data-chatgpt-search-message-ids` while sharing
+its parent with the user bubble and thought-duration controls. Discovery requires
+a substantive response body within the same keyed turn, rejects user, reasoning
+and control ownership, and deduplicates nested message roots. An assistant-start
+marker preserves a larger explicitly owned assistant branch when it encloses the
+native answer and sibling output artifacts. Its walk never includes a user
+message. Progress collection stays within that owned scope; a final message root
+cannot borrow its parent as a progress stack. Prompt/steering effect
+reconciliation uses the same currently present matching-new-user evidence as
+submission waiting; projected keys and epochs alone are insufficient. When
+production recovery carries only a bound hash and no expected prompt text is
+available, this reader cannot establish text binding and stays uncertain.
+Missing/degraded DOM or prior observed submission cannot prove no send merely
+because the composer currently matches. The native final message remains the
+answer extraction root even when its enclosing branch owns progress/artifacts.
+
 Turn-owned errors and approval controls affect only their owning turn; page-level
 signals outside turns remain available. Response signatures retain exact parsed
 text, including case, line breaks and code indentation.
+
+A matching composer draft alone is not proof that prompt or steering submission never started; recovery stays uncertain without bound positive turn evidence.
 
 ## 6. Assistant phases
 

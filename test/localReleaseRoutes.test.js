@@ -117,20 +117,23 @@ test('stale lease release passes the parsed request body unchanged to the coordi
 test('stale lease release maps coordinator outcomes to bounded HTTP responses', async () => {
   const { bridge, route } = createRouteHarness();
   const cases = [
-    ['confirmed', 200],
-    ['ambiguous', 202],
-    ['rejected', 409],
+    ['confirmed', 200, ''],
+    ['ambiguous', 202, 'release_command_failed'],
+    ['rejected', 409, 'release_already_attempted'],
+    ['rejected', 409, 'safe diagnostic code'],
   ];
-  for (const [status, expectedStatusCode] of cases) {
+  for (const [status, expectedStatusCode, reason] of cases) {
     bridge.outcome = {
       status,
-      reason: 'safe diagnostic code',
+      reason,
       result: { prompt: 'private prompt', page: '<private page>', path: '/private/host/path' },
       message: 'private coordinator detail',
     };
     const response = await invoke(route, '127.0.0.1', validReleaseIdentity());
     assert.equal(response.statusCode, expectedStatusCode, status);
-    assert.deepEqual(response.body, { status });
+    assert.deepEqual(response.body, reason === 'release_command_failed' || reason === 'release_already_attempted'
+      ? { status, reason }
+      : { status });
   }
 });
 

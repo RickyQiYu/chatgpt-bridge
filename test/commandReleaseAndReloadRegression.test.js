@@ -177,6 +177,88 @@ test('release command registry settles an explicit pre-dispatch rejection immedi
   } finally { registry.close(); }
 });
 
+test('release command registry returns an exact existing release command identity for safe continuation', async () => {
+  const delivered = [];
+  const registry = new BridgeCommandRegistry({ hub: {
+    sendToClientWithDelivery(clientId, payload, options) {
+      delivered.push({ clientId, payload, options });
+      return { client: { id: clientId }, delivered: Promise.resolve() };
+    },
+  } });
+  const request = { requestId: 'request-release-continue', leaseId: 'lease-release-continue', ownerServerInstanceId: 'prior-server', responseEpoch: 3 };
+  try {
+    const pending = registry.send('request.release', { type: 'request.release', recoveryMode: 'stale_lease' }, {
+      sourceClientId: 'tab-release-continue', commandId: 'release-new-command', request, timeoutMs: 10_000,
+    });
+    void pending.catch(() => {});
+    await waitFor(() => delivered.length === 1);
+    assert.equal(registry.handleResponse('tab-release-continue', {
+      type: 'command.error', commandId: 'release-new-command', requestId: request.requestId,
+      leaseId: request.leaseId, ownerServerInstanceId: request.ownerServerInstanceId, responseEpoch: request.responseEpoch,
+      code: 'BROWSER_TAB_LEASED', message: 'a persisted release command already exists',
+      preDispatchRejected: true, existingCommandId: 'release-persisted-command',
+    }), true);
+    await assert.rejects(pending, (error) => error.code === 'BROWSER_TAB_LEASED'
+      && error.preDispatchRejected === true
+      && error.existingCommandId === 'release-persisted-command');
+    assert.equal(registry.has('release-new-command'), false);
+  } finally { registry.close(); }
+});
+
+test('release command registry settles exact pre-dispatch child-gate rejection without releasing the lease', async () => {
+  const delivered = [];
+  const registry = new BridgeCommandRegistry({ hub: {
+    sendToClientWithDelivery(clientId, payload, options) {
+      delivered.push({ clientId, payload, options });
+      return { client: { id: clientId }, delivered: Promise.resolve() };
+    },
+  } });
+  const request = { requestId: 'request-release-child-gate', leaseId: 'lease-release-child-gate', ownerServerInstanceId: 'prior-server', responseEpoch: 2 };
+  try {
+    const pending = registry.send('request.release', { type: 'request.release', recoveryMode: 'stale_lease' }, {
+      sourceClientId: 'tab-release-child-gate', commandId: 'release-child-gate-command', request, timeoutMs: 10_000,
+    });
+    void pending.catch(() => {});
+    await waitFor(() => delivered.length === 1);
+    assert.equal(registry.handleResponse('tab-release-child-gate', {
+      type: 'command.error', commandId: 'release-child-gate-command', requestId: request.requestId,
+      leaseId: request.leaseId, ownerServerInstanceId: request.ownerServerInstanceId, responseEpoch: request.responseEpoch,
+      code: 'BROWSER_TAB_LEASED', reasonCode: 'lease_children_active', message: 'Stale release recovery rejected: lease_children_active',
+      preDispatchRejected: true,
+    }), true);
+    await assert.rejects(pending, (error) => error.code === 'BROWSER_TAB_LEASED'
+      && error.preDispatchRejected === true && error.reasonCode === 'lease_children_active');
+    assert.equal(registry.has('release-child-gate-command'), false);
+  } finally { registry.close(); }
+});
+
+test('release command registry settles an exact pre-dispatch lease identity mismatch', async () => {
+  const delivered = [];
+  const registry = new BridgeCommandRegistry({ hub: {
+    sendToClientWithDelivery(clientId, payload, options) {
+      delivered.push({ clientId, payload, options });
+      return { client: { id: clientId }, delivered: Promise.resolve() };
+    },
+  } });
+  const request = { requestId: 'request-release-lease-mismatch', leaseId: 'lease-release-lease-mismatch', ownerServerInstanceId: 'prior-server', responseEpoch: 4 };
+  try {
+    const pending = registry.send('request.release', { type: 'request.release', recoveryMode: 'stale_lease' }, {
+      sourceClientId: 'tab-release-lease-mismatch', commandId: 'release-lease-mismatch-command', request, timeoutMs: 10_000,
+    });
+    void pending.catch(() => {});
+    await waitFor(() => delivered.length === 1);
+    assert.equal(registry.handleResponse('tab-release-lease-mismatch', {
+      type: 'command.error', commandId: 'release-lease-mismatch-command', requestId: request.requestId,
+      leaseId: request.leaseId, ownerServerInstanceId: request.ownerServerInstanceId, responseEpoch: request.responseEpoch,
+      code: 'BROWSER_TAB_LEASE_MISMATCH', reasonCode: 'lease_mismatch', message: 'Stale release recovery rejected: lease_mismatch',
+      preDispatchRejected: true,
+    }), true);
+    await assert.rejects(pending, (error) => error.code === 'BROWSER_TAB_LEASE_MISMATCH'
+      && error.preDispatchRejected === true && error.reasonCode === 'lease_mismatch');
+    assert.equal(registry.has('release-lease-mismatch-command'), false);
+  } finally { registry.close(); }
+});
+
 test('standalone result command never claims a lease and a valid prompt command atomically claims one with its first effect', async () => {
   const h = backgroundHarness();
   try {
@@ -502,6 +584,12 @@ test('stale request.release continues only the same persisted registered command
       sequence: 1, commandId: 'different-release-logical-command', type: 'request.release', request,
       payload: { recoveryMode: 'stale_lease' },
     }) });
+    const identityConflict = h.sent.find((entry) => entry.messageType === ExtensionMessageType.COMMAND_REJECTED
+      && entry.body.commandId === 'different-release-logical-command');
+    assert.equal(identityConflict?.body.code, 'BROWSER_TAB_LEASED');
+    assert.equal(identityConflict?.body.preDispatchRejected, true);
+    assert.equal(identityConflict?.body.existingCommandId, commandId);
+    assert.deepEqual(identityConflict?.request, request);
     await handleServerEnvelope({ ...h, envelope: serverEnvelope({
       sequence: 2, commandId, type: 'request.release', request: { ...request, responseEpoch: 1 },
       payload: { recoveryMode: 'stale_lease' },
@@ -629,6 +717,122 @@ test('lease.release_recover refuses active request commands, effects, and downlo
       assert.equal(recovered.state.lease.releaseRecoveryUsed, undefined);
     } finally { h.restore(); }
   }
+});
+
+test('lease release recovery ignores a typed read-only effect evidence command', async () => {
+  const request = { requestId: 'request-read-reconcile', leaseId: 'lease-read-reconcile', ownerServerInstanceId: 'server-regression', responseEpoch: 0 };
+  const h = backgroundHarness(104);
+  try {
+    await initializeHarness(h);
+    await h.backgroundState.transition(h.state.tabId, { type: 'lease.claim', ...request, contentEpoch: h.state.contentEpoch });
+    const commandId = 'read-effect-reconcile';
+    const registered = await h.backgroundState.transition(h.state.tabId, {
+      type: 'command.registered', ...request, scope: 'request', commandId,
+      commandType: 'request.effect.reconcile', mode: 'result', operation: 'read',
+      retryPolicy: 'always', reconcilePolicy: 'effect_evidence', contentEpoch: h.state.contentEpoch,
+    });
+    assert.equal(registered.accepted, true, registered.reason);
+    const acceptedEnvelope = h.createEnvelopeDraft(h.state, ExtensionMessageType.COMMAND_ACCEPTED, {
+      commandId, commandType: 'request.effect.reconcile', requestId: request.requestId,
+      commandScope: 'request', commandMode: 'result',
+    }, { commandId, causationId: `message-${commandId}`, lease: request });
+    const dispatched = await h.backgroundState.transition(h.state.tabId, {
+      type: 'command.dispatched', commandId, acceptedEnvelope, ...request, contentEpoch: h.state.contentEpoch,
+    });
+    assert.equal(dispatched.accepted, true, dispatched.reason);
+
+    const recovered = await h.backgroundState.transition(h.state.tabId, releaseRecoveryEvent(h, request, 'release-after-read-command'));
+    assert.equal(recovered.accepted, true, recovered.reason);
+    assert.equal(recovered.state.lease.status, 'releasing');
+    const released = await h.backgroundState.transition(h.state.tabId, {
+      type: 'lease.release', ...request, contentEpoch: h.state.contentEpoch,
+    });
+    assert.equal(released.accepted, true, released.reason);
+    assert.equal(released.state.lease, null);
+    assert.equal(released.state.commands[commandId].status, 'dispatched');
+    assert.deepEqual(released.state.effects, {});
+    assert.deepEqual(released.state.downloads, {});
+  } finally { h.restore(); }
+});
+
+test('lease release recovery requires exact read evidence metadata', async () => {
+  const invalidContracts = [
+    {
+      tabId: 105, requestId: 'request-wrong-reconcile-policy', leaseId: 'lease-wrong-reconcile-policy',
+      commandId: 'wrong-reconcile-policy', operation: 'read', reconcilePolicy: 'request_projection',
+    },
+    {
+      tabId: 106, requestId: 'request-missing-operation', leaseId: 'lease-missing-operation',
+      commandId: 'missing-operation', reconcilePolicy: 'effect_evidence',
+    },
+  ];
+
+  for (const contract of invalidContracts) {
+    const request = {
+      requestId: contract.requestId, leaseId: contract.leaseId,
+      ownerServerInstanceId: 'server-regression', responseEpoch: 0,
+    };
+    const h = backgroundHarness(contract.tabId);
+    try {
+      await initializeHarness(h);
+      await h.backgroundState.transition(h.state.tabId, { type: 'lease.claim', ...request, contentEpoch: h.state.contentEpoch });
+      const registration = {
+        type: 'command.registered', ...request, scope: 'request', commandId: contract.commandId,
+        commandType: 'request.effect.reconcile', mode: 'result', retryPolicy: 'always',
+        reconcilePolicy: contract.reconcilePolicy, contentEpoch: h.state.contentEpoch,
+      };
+      if (contract.operation) registration.operation = contract.operation;
+      const registered = await h.backgroundState.transition(h.state.tabId, registration);
+      assert.equal(registered.accepted, true, registered.reason);
+      const acceptedEnvelope = h.createEnvelopeDraft(h.state, ExtensionMessageType.COMMAND_ACCEPTED, {
+        commandId: contract.commandId, commandType: 'request.effect.reconcile', requestId: request.requestId,
+        commandScope: 'request', commandMode: 'result',
+      }, { commandId: contract.commandId, causationId: `message-${contract.commandId}`, lease: request });
+      const dispatched = await h.backgroundState.transition(h.state.tabId, {
+        type: 'command.dispatched', commandId: contract.commandId, acceptedEnvelope, ...request, contentEpoch: h.state.contentEpoch,
+      });
+      assert.equal(dispatched.accepted, true, dispatched.reason);
+
+      const recovered = await h.backgroundState.transition(h.state.tabId, releaseRecoveryEvent(h, request, `release-${contract.commandId}`));
+      assert.equal(recovered.accepted, false);
+      assert.equal(recovered.reason, 'lease_children_active');
+      assert.equal(recovered.state.lease.status, 'claimed');
+      assert.equal(recovered.state.lease.releaseRecoveryUsed, undefined);
+    } finally { h.restore(); }
+  }
+});
+
+test('stale request.release reports a pre-dispatch child gate without changing the persisted lease', async () => {
+  const h = backgroundHarness(103);
+  const request = { requestId: 'request-stale-release-active-child', leaseId: 'lease-stale-release-active-child', ownerServerInstanceId: 'server-regression', responseEpoch: 0 };
+  try {
+    await initializeHarness(h);
+    await h.backgroundState.transition(h.state.tabId, { type: 'lease.claim', ...request, contentEpoch: h.state.contentEpoch });
+    const child = await h.backgroundState.transition(h.state.tabId, {
+      type: 'command.registered', ...request, scope: 'request', commandId: 'active-child-command',
+      commandType: 'prompt.send', contentEpoch: h.state.contentEpoch,
+    });
+    assert.equal(child.accepted, true, child.reason);
+    await h.backgroundState.transition(h.state.tabId, { type: 'lease.quarantine', ...request, reason: 'release outcome is unresolved', contentEpoch: h.state.contentEpoch });
+
+    await handleServerEnvelope({ ...h, envelope: serverEnvelope({
+      sequence: 1, commandId: 'stale-release-active-child-command', type: 'request.release', request,
+      payload: { recoveryMode: 'stale_lease' },
+    }) });
+
+    const response = h.sent.find((entry) => entry.messageType === ExtensionMessageType.COMMAND_REJECTED
+      && entry.body?.commandId === 'stale-release-active-child-command');
+    assert.equal(response?.body.code, 'BROWSER_TAB_LEASED');
+    assert.equal(response?.body.preDispatchRejected, true);
+    assert.equal(response?.body.reasonCode, 'lease_children_active');
+    assert.deepEqual(response?.request, request);
+
+    const runtime = await h.backgroundState.read(h.state.tabId);
+    assert.equal(runtime.lease.status, 'quarantined');
+    assert.equal(runtime.lease.releaseRecoveryUsed, undefined);
+    assert.equal(runtime.commands['stale-release-active-child-command'], undefined);
+    assert.equal(h.posted.some((entry) => entry.type === 'server.message' && entry.payload.type === 'request.release'), false);
+  } finally { h.restore(); }
 });
 
 test('layout capture chunks stay non-terminal in background and the durable terminal envelope remains small', async () => {

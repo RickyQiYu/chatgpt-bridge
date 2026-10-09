@@ -1,4 +1,5 @@
 import { config } from '../../config.js';
+import { makeRequestId } from '../../protocol.js';
 import { isRequestRuntimeFinished } from './requestRuntimeProjection.js';
 
 const IDENTITY_FIELDS = Object.freeze([
@@ -15,6 +16,7 @@ const LEASE_IDENTITY_FIELDS = Object.freeze([
   'responseEpoch',
 ]);
 const TERMINAL_LIFECYCLES = new Set(['completed', 'failed', 'cancelled']);
+const COMMAND_ID_PATTERN = /^[A-Za-z0-9._~-]{1,128}$/;
 
 function exactInputIdentity(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -80,8 +82,8 @@ function attemptKey(identity) {
  * Performs one exact stale-lease cleanup after proving that the owning tab is
  * ready, still reports the same persisted lease, and has a fresh Voice-idle
  * composer observation. A stopped generation alone is insufficient because
- * the composer may still contain an unsent draft.
- * It does not change canonical request state and never retries a release.
+ * the composer may still contain an unsent draft. Reconciliation reuses the
+ * exact persisted release command ID so it cannot dispatch a second cleanup.
  */
 export class StaleRequestReleaseCoordinator {
   constructor({
@@ -92,6 +94,7 @@ export class StaleRequestReleaseCoordinator {
     hasPendingCommandForClient = () => false,
     getCanonicalRequestState,
     sendCommand,
+    createReleaseCommandId = makeRequestId,
     now = () => Date.now(),
     observationFreshnessMs = config.clientStaleMs,
   } = {}) {
@@ -111,12 +114,16 @@ export class StaleRequestReleaseCoordinator {
       : () => false;
     this.getCanonicalRequestState = getCanonicalRequestState;
     this.sendCommand = sendCommand;
+    this.createReleaseCommandId = typeof createReleaseCommandId === 'function'
+      ? createReleaseCommandId
+      : makeRequestId;
     this.now = typeof now === 'function' ? now : () => Date.now();
     const freshness = Number(observationFreshnessMs);
     this.observationFreshnessMs = Number.isFinite(freshness) && freshness > 0
       ? freshness
       : Number(config.clientStaleMs) || 30_000;
-    this.releaseAttempts = new Set();
+    this.releaseCommandIds = new Map();
+    this.releaseInFlight = new Set();
   }
 
   async releaseStaleRequestLease(input, { clientSnapshot = null } = {}) {
@@ -124,7 +131,7 @@ export class StaleRequestReleaseCoordinator {
     if (!identity) return rejected('invalid_identity');
     if (!this.serverInstanceId) return rejected('server_instance_missing');
     const releaseKey = attemptKey(identity);
-    if (this.releaseAttempts.has(releaseKey)) return rejected('release_already_attempted');
+    if (this.releaseInFlight.has(releaseKey)) return rejected('release_pending');
 
     let candidates;
     try { candidates = this.activeRequestCandidates(); } catch { return rejected('candidate_lookup_failed'); }
@@ -255,41 +262,73 @@ export class StaleRequestReleaseCoordinator {
         return rejected('observation_refresh_unconfirmed');
       }
     }
-    if (this.releaseAttempts.has(releaseKey)) return rejected('release_already_attempted');
-
     const request = {
       requestId: identity.requestId,
       leaseId: identity.leaseId,
       ownerServerInstanceId: identity.ownerServerInstanceId,
       responseEpoch: identity.responseEpoch,
     };
-    if (this.releaseAttempts.size >= 500) this.releaseAttempts.delete(this.releaseAttempts.values().next().value);
-    this.releaseAttempts.add(releaseKey);
+    let commandId = this.releaseCommandIds.get(releaseKey) || '';
+    if (!commandId) {
+      try { commandId = String(this.createReleaseCommandId() || '').trim(); } catch { commandId = ''; }
+      if (!COMMAND_ID_PATTERN.test(commandId)) return rejected('release_command_identity_invalid');
+      if (this.releaseCommandIds.size >= 500) this.releaseCommandIds.delete(this.releaseCommandIds.keys().next().value);
+      this.releaseCommandIds.set(releaseKey, commandId);
+    }
+
+    const sendRelease = async (releaseCommandId, allowIdentityAdoption = true) => {
+      try {
+        const result = await this.sendCommand('request.release', {
+          requestId: identity.requestId,
+          recoveryMode: 'stale_lease',
+          reason: 'stale_lease_release',
+          terminalCode: 'stale_lease_release',
+        }, {
+          sourceClientId: identity.clientId,
+          timeoutMs: 10_000,
+          commandId: releaseCommandId,
+          request,
+        });
+        if (result?.type === 'lease.released' && result.released === true) {
+          this.releaseCommandIds.delete(releaseKey);
+          return { status: 'confirmed', result };
+        }
+        return { status: 'ambiguous', reason: 'release_unconfirmed' };
+      } catch (error) {
+        const existingCommandId = String(error?.existingCommandId || '').trim();
+        const validExistingCommandId = COMMAND_ID_PATTERN.test(existingCommandId);
+        if (error?.preDispatchRejected === true
+          && validExistingCommandId
+          && existingCommandId !== releaseCommandId
+          && allowIdentityAdoption) {
+          this.releaseCommandIds.set(releaseKey, existingCommandId);
+          return await sendRelease(existingCommandId, false);
+        }
+        if (error?.preDispatchRejected === true) {
+          if (validExistingCommandId && existingCommandId !== releaseCommandId) {
+            this.releaseCommandIds.set(releaseKey, existingCommandId);
+          } else if (!validExistingCommandId) {
+            this.releaseCommandIds.delete(releaseKey);
+          }
+          const reasonCode = String(error?.reasonCode || '').trim();
+          const safeReasonCode = /^[a-z][a-z0-9_]{0,79}$/.test(reasonCode)
+            ? reasonCode
+            : 'release_rejected_before_dispatch';
+          return rejected(validExistingCommandId ? 'release_command_identity_conflict' : safeReasonCode);
+        }
+        return {
+          status: 'ambiguous',
+          reason: 'release_command_failed',
+          message: String(error?.message || error || 'Release command failed'),
+        };
+      }
+    };
+
+    this.releaseInFlight.add(releaseKey);
     try {
-      const result = await this.sendCommand('request.release', {
-        requestId: identity.requestId,
-        recoveryMode: 'stale_lease',
-        reason: 'stale_lease_release',
-        terminalCode: 'stale_lease_release',
-      }, {
-        sourceClientId: identity.clientId,
-        timeoutMs: 10_000,
-        request,
-      });
-      if (result?.type === 'lease.released' && result.released === true) {
-        return { status: 'confirmed', result };
-      }
-      return { status: 'ambiguous', reason: 'release_unconfirmed' };
-    } catch (error) {
-      if (error?.preDispatchRejected === true) {
-        this.releaseAttempts.delete(releaseKey);
-        return rejected('release_rejected_before_dispatch');
-      }
-      return {
-        status: 'ambiguous',
-        reason: 'release_command_failed',
-        message: String(error?.message || error || 'Release command failed'),
-      };
+      return await sendRelease(commandId);
+    } finally {
+      this.releaseInFlight.delete(releaseKey);
     }
   }
 }

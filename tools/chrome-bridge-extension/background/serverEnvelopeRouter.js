@@ -1,6 +1,7 @@
 import '../shared/commandManifest.js';
 import { MessageType } from './protocolV5.js';
 import { matchingPersistedRequestIdentity } from './stateV6Core.js';
+import { rejectCommand } from './commandRejection.js';
 
 function commandDefinition(commandType = '') {
   return globalThis.ChatGptBridgeCommandManifest?.commandDefinition?.(commandType) || null;
@@ -264,6 +265,8 @@ async function handleCommand(deps) {
         state, envelope, payload, sendProtocolMessage,
         code: 'BROWSER_TAB_LEASED',
         message: 'A release command is already recorded for this exact request lease',
+        preDispatchRejected: true,
+        existingCommandId: existingReleaseCommand.commandId,
       });
     }
     if (existingReleaseCommand && existingReleaseCommand.status !== 'registered') {
@@ -305,6 +308,8 @@ async function handleCommand(deps) {
       state, envelope, payload, sendProtocolMessage,
       message: `Stale release recovery rejected: ${recovered.reason}`,
       code: recovered.reason === 'lease_mismatch' ? 'BROWSER_TAB_LEASE_MISMATCH' : 'BROWSER_TAB_LEASED',
+      preDispatchRejected: true,
+      reasonCode: recovered.reason,
     });
     await flushCriticalOutbox(state);
     scheduleReleaseDeadline?.(state, commandId, Number(payload.releaseCleanupTimeoutMs) || 8_000);
@@ -458,10 +463,4 @@ async function registerAndDispatchCommand({ state, envelope, payload, background
     commandScope: scope, commandMode: mode, leaseId: request?.leaseId || '', ownerServerInstanceId: request?.ownerServerInstanceId || '',
     protocolMessageId: envelope.messageId,
   } });
-}
-
-async function rejectCommand({ state, envelope, payload, sendProtocolMessage, message, code = 'BROWSER_COMMAND_REJECTED' }) {
-  await sendProtocolMessage(state, MessageType.COMMAND_REJECTED, {
-    commandId: payload.commandId, requestId: envelope.request?.requestId || '', code, message, error: message,
-  }, { commandId: payload.commandId, causationId: envelope.messageId, lease: envelope.request || null });
 }

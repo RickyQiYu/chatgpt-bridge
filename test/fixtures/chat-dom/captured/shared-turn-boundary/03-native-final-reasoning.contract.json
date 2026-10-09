@@ -1,0 +1,7 @@
+{
+  "source": {"html": "03-native-final-reasoning.html", "kind": "sanitized-synthetic", "privacy": "Generic identities and synthetic visible status; no user/account data or hidden reasoning."},
+  "submittedUserTurnKey": "turn-current::user",
+  "answer": "Actual final answer.",
+  "progressIncludes": ["Visible reasoning status."],
+  "progressExcludes": ["Prompt"]
+}

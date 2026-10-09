@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import test from 'node:test';
 import vm from 'node:vm';
+import { createAssistantFixtureParser } from './helpers/offlineChatDom.js';
 import { createPromptExecutionPlan, resumePromptExecutionPlan } from '../src/bridge/requestExecutionPlan.js';
 
 const REQUEST_COMMAND_FILES = [
@@ -33,6 +35,7 @@ function makeHarness({
   composerRootText = '',
   attachmentNodes = [],
   generating = false,
+  readCurrentSubmittedUserTurnAnchor = () => null,
 } = {}) {
   const sent = [];
   const context = { console };
@@ -67,6 +70,7 @@ function makeHarness({
     getCurrentSession: () => ({ id: sessionId }),
     pagePresence: () => page,
     readIntelligenceState: async () => intelligence,
+    readCurrentSubmittedUserTurnAnchor,
     findComposer: () => composer,
     findComposerRootStrict: () => composerRoot,
     findStopButton: () => (generating ? {} : null),
@@ -134,15 +138,15 @@ const cases = [
   },
   {
     name: 'prompt submit succeeds only after a submitted user turn is observed',
-    options: { request: { requestId: 'request-1', phase: 'waiting_for_response', options: {}, submittedUserTurnKey: 'user-1', responseEpoch: 1 } },
+    options: { request: { requestId: 'request-1', phase: 'waiting_for_response', options: {}, submittedUserTurnKey: 'user-1', responseEpoch: 1 }, readCurrentSubmittedUserTurnAnchor: () => ({ key: 'user-1', index: 1 }) },
     payload: { effectType: 'prompt.submit', evidence: { message: 'hello' } },
     outcome: 'succeeded', reason: 'submitted_user_turn_observed',
   },
   {
-    name: 'prompt submit is proved not started when exact text remains in composer',
+    name: 'matching composer text alone leaves prompt submission uncertain',
     options: { composerText: 'hello' },
     payload: { effectType: 'prompt.submit', evidence: { message: 'hello' } },
-    outcome: 'not_started', reason: 'expected_prompt_still_in_composer',
+    outcome: 'uncertain', reason: 'prompt_submission_not_provable',
   },
   {
     name: 'prompt submit remains uncertain without a turn or composer proof',
@@ -183,6 +187,91 @@ const cases = [
     outcome: 'succeeded', reason: 'read_only_stage_has_active_projection',
   },
 ];
+
+
+test('submission reconciliation reads matching native users from the current DOM', async (t) => {
+  const scenarios = [
+    { name: 'matching new native user', key: 'native-user', text: 'hello', projected: 'native-user::user', baseline: ['earlier-user'], outcome: 'succeeded' },
+    { name: 'missing projected user', key: 'native-user', text: 'hello', projected: 'phantom-user', baseline: ['earlier-user'], outcome: 'uncertain' },
+    { name: 'wrong prompt text', key: 'native-user', text: 'Different prompt', projected: 'native-user::user', baseline: ['earlier-user'], outcome: 'uncertain' },
+    { name: 'user already in baseline', key: 'native-user', text: 'hello', projected: 'native-user::user', baseline: ['native-user::user'], outcome: 'uncertain' },
+    { name: 'optimistic native key', key: 'pending-chatgpt-submit', text: 'hello', projected: 'pending-chatgpt-submit::user', baseline: ['earlier-user'], outcome: 'uncertain' },
+  ];
+  for (const scenario of scenarios) {
+    await t.test(scenario.name, async () => {
+      const parser = await createAssistantFixtureParser();
+      parser.mount(`<main><div data-turn-key="${scenario.key}"><div class="group/user-message" data-chatgpt-search-message-ids="user-id"><p>${scenario.text}</p></div></div></main>`);
+      for (const effectType of ['prompt.submit', 'prompt.steer']) {
+        const result = await makeHarness({ request: {
+          requestId: 'request-1', phase: 'waiting_for_response', options: {},
+          submittedUserTurnKey: scenario.projected, responseEpoch: 2,
+          baselineTurnKeys: new Set(scenario.baseline),
+        }, readCurrentSubmittedUserTurnAnchor: (...args) => parser.snapshots.readCurrentSubmittedUserTurnAnchor(...args),
+        }).reconcile({ effectType, evidence: { message: 'hello', targetResponseEpoch: 2 } });
+        assert.equal(result.reconciliationOutcome, scenario.outcome, effectType);
+      }
+    });
+  }
+});
+
+test('reconciliation keeps prior submission and DOM failures uncertain when the composer matches', async (t) => {
+  for (const effectType of ['prompt.submit', 'prompt.steer']) {
+    for (const mode of ['missing-anchor', 'read-error']) {
+      await t.test(`${effectType}: ${mode}`, async () => {
+        const result = await makeHarness({ composerText: 'hello', request: {
+          requestId: 'request-1', phase: 'waiting_for_response', options: {},
+          submittedUserTurnKey: 'previously-observed-user', responseEpoch: 2,
+        }, readCurrentSubmittedUserTurnAnchor: () => { if (mode === 'read-error') throw new Error('DOM unavailable'); return null; },
+        }).reconcile({ effectType, evidence: { message: 'hello', targetResponseEpoch: 2 } });
+        assert.equal(result.reconciliationOutcome, 'uncertain');
+      });
+    }
+  }
+});
+
+test('production-shaped hash-only recovery cannot treat empty expected text as a wildcard', async (t) => {
+  const promptHash = createHash('sha256').update('hello').digest('hex');
+  for (const effectType of ['prompt.submit', 'prompt.steer']) {
+    await t.test(effectType, async () => {
+      const parser = await createAssistantFixtureParser();
+      parser.mount('<main><div data-turn-key="native-user"><div class="group/user-message" data-chatgpt-search-message-ids="native-user"><p>Different prompt</p></div></div></main>');
+      const result = await makeHarness({ request: {
+        requestId: 'request-1', phase: 'waiting_for_response', options: {},
+        submittedUserTurnKey: 'native-user::user', responseEpoch: 2,
+        baselineTurnKeys: new Set(['earlier-user']), pendingSubmittedTurnExpectedText: '',
+      }, readCurrentSubmittedUserTurnAnchor: (...args) => parser.snapshots.readCurrentSubmittedUserTurnAnchor(...args),
+      }).reconcile({ effectType, preconditions: effectType === 'prompt.submit'
+        ? { promptHash } : { messageHash: promptHash, targetResponseEpoch: 2 },
+      evidence: effectType === 'prompt.submit' ? null : { messageLength: 5, previousResponseEpoch: 1, targetResponseEpoch: 2 } });
+      assert.equal(result.reconciliationOutcome, 'uncertain');
+    });
+  }
+});
+
+test('an empty projection cannot prove no send when a matching new native user exists', async () => {
+  const parser = await createAssistantFixtureParser();
+  parser.mount('<main><div data-turn-key="native-user"><div class="group/user-message" data-chatgpt-search-message-ids="native-user"><p>hello</p></div></div></main>');
+  for (const effectType of ['prompt.submit', 'prompt.steer']) {
+    const result = await makeHarness({ composerText: 'hello', request: {
+      requestId: 'request-1', phase: 'waiting_for_response', options: {},
+      submittedUserTurnKey: '', responseEpoch: 1,
+      pendingSubmittedTurnBaseline: new Set(['earlier-user']), pendingSubmittedTurnExpectedText: 'hello',
+    }, readCurrentSubmittedUserTurnAnchor: (...args) => parser.snapshots.readCurrentSubmittedUserTurnAnchor(...args),
+    }).reconcile({ effectType, evidence: { message: 'hello', targetResponseEpoch: 2 } });
+    assert.equal(result.reconciliationOutcome, 'uncertain', effectType);
+  }
+});
+
+test('effect reconciliation cannot authorize prompt or steer from a phantom projected key', async () => {
+  for (const effectType of ['prompt.submit', 'prompt.steer']) {
+    const result = await makeHarness({ request: {
+      requestId: 'request-1', phase: 'waiting_for_response', options: {},
+      submittedUserTurnKey: 'phantom-user', responseEpoch: 2,
+      pendingSubmittedTurnBaseline: new Set(['earlier-user']),
+    } }).reconcile({ effectType, evidence: { message: 'hello', targetResponseEpoch: 2 } });
+    assert.equal(result.reconciliationOutcome, 'uncertain', effectType);
+  }
+});
 
 for (const scenario of cases) {
   test(scenario.name, async () => {

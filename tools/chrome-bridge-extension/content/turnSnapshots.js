@@ -123,6 +123,15 @@ function requestTurnRecords({ includeText = false } = {}) {
     text: includeText ? (turnRole(turn) === 'user' ? readUserTurnPromptText(turn) : visibleText(turn)) : '',
   }));
 }
+function readCurrentSubmittedUserTurnAnchor(request, baselineTurnKeys = [], expectedText = '') {
+  const key = String(request?.submittedUserTurnKey || '');
+  const baseline = baselineTurnKeys instanceof Set ? baselineTurnKeys : new Set(baselineTurnKeys || []);
+  if (!key || baseline.has(key)) return null;
+  const current = DOM_PARSER.selectLatestMatchingNewTurnRecord(
+    requestTurnRecords({ includeText: true }), baseline, 'user', String(expectedText || ''),
+  );
+  return current?.key === key ? { key, index: current.index } : null;
+}
 function resetAssistantAnchorAfterSteer(request, candidate) {
   const previousAssistantTurnKey = request.assistantTurnKey || '';
   request.update('request.anchor_updated', {
@@ -211,9 +220,8 @@ function adoptSubmittedUserTurn(request, baselineTurnKeys, { kind = 'prompt', re
 async function waitForSubmittedUserTurnAnchor(request, baselineTurnKeys, { kind = 'prompt', replace = false, timeoutMs = 5_000 } = {}) {
   const baseline = baselineTurnKeys instanceof Set ? baselineTurnKeys : new Set(baselineTurnKeys || []);
   const alreadyCaptured = () => {
-    const key = String(request?.submittedUserTurnKey || '');
-    if (!key || baseline.has(key)) return null;
-    return { key, index: request.submittedUserTurnIndex, reason: 'already_captured_by_dom_monitor' };
+    const current = readCurrentSubmittedUserTurnAnchor(request, baseline, request?.pendingSubmittedTurnExpectedText);
+    return current ? { ...current, reason: 'already_captured_by_dom_monitor' } : null;
   };
   const started = Date.now();
   diagnostic(`${kind}.user_turn_anchor_wait.started`, {
@@ -464,6 +472,9 @@ function isMeaningfulVisibleElement(element) {
 
 function findMessageStack(turn, finalNode) {
   if (!turn || !finalNode) return { stack: turn || finalNode, finalBranch: finalNode };
+  // A native message root can be its own final node. Its parent may also own
+  // the user bubble, so it must never become an implicit progress scope.
+  if (turn === finalNode) return { stack: null, finalBranch: finalNode };
   let branch = finalNode;
   let parent = finalNode.parentElement;
   while (parent && (parent === turn || turn.contains?.(parent))) {
@@ -475,7 +486,7 @@ function findMessageStack(turn, finalNode) {
     branch = parent;
     parent = parent.parentElement;
   }
-  return { stack: finalNode.parentElement || turn, finalBranch: finalNode };
+  return { stack: turn, finalBranch: directChildContaining(turn, finalNode) || finalNode };
 }
 
 function findTemporaryMessageStack(turn) {
@@ -986,6 +997,7 @@ function readAssistantNodeSnapshot(node, meta = {}) {
       readUserTurnPromptText,
       classifyUserTurnError,
       readSubmittedUserTurnError,
+      readCurrentSubmittedUserTurnAnchor,
       waitForSubmittedUserTurnAnchor,
       refreshRequestTurnAnchors,
       readLatestAssistantSnapshot,

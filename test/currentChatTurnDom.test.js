@@ -1,6 +1,107 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
 import test from 'node:test';
 import { createAssistantFixtureParser } from './helpers/offlineChatDom.js';
+
+test('shared user and thought parent still selects the native assistant message root', async () => {
+  const parser = await createAssistantFixtureParser();
+  const base = new URL('./fixtures/chat-dom/captured/shared-turn-boundary/', import.meta.url);
+  const contract = JSON.parse(await fs.readFile(new URL('01-shared-turn.contract.json', base), 'utf8'));
+  const html = await fs.readFile(new URL(contract.source.html, base), 'utf8');
+  const result = parser.parseRequestWithoutAssistant(html, { submittedUserTurnKey: contract.submittedUserTurnKey });
+  assert.equal(result.userTurnKey, contract.submittedUserTurnKey);
+  assert.equal(result.turnKey, contract.assistantTurnKey);
+  for (const text of contract.answerIncludes) assert.ok(result.answer.includes(text), text);
+  for (const text of contract.answerExcludes) assert.ok(!result.answer.includes(text), text);
+  assert.ok(!result.progressItems.some((item) => item.text.includes('A scheduled wake')));
+  assert.ok(!result.thinking.includes('A scheduled wake'));
+  assert.ok(!result.progress.includes('A scheduled wake'));
+  assert.ok(!result.progressItems.some((item) => item.text.includes('A completed Planner response.')));
+  assert.equal(parser.snapshots.getTurnNodes().filter((node) => parser.snapshots.turnRole(node) === 'assistant').length, 1);
+});
+
+test('native answer discovery preserves sibling artifacts within its owned assistant branch', async () => {
+  const parser = await createAssistantFixtureParser();
+  const html = await fs.readFile(new URL('./fixtures/chat-dom/captured/shared-turn-boundary/02-native-answer-artifact.html', import.meta.url), 'utf8');
+  const result = parser.parseRequestWithoutAssistant(html, { submittedUserTurnKey: 'turn-current::user' });
+  assert.equal(result.answer, 'Answer text');
+  assert.equal(result.artifacts.length, 1);
+  assert.equal(result.artifacts[0].name, 'result.zip');
+  assert.equal(result.artifacts[0].phase, 'READY');
+  assert.ok(!result.progressItems.some((item) => item.text === 'Prompt'));
+  assert.equal(parser.snapshots.getTurnNodes().filter((node) => parser.snapshots.turnRole(node) === 'assistant').length, 1);
+});
+
+test('native answer ownership retains generating artifacts and excludes user and future attachments', async () => {
+  const parser = await createAssistantFixtureParser();
+  let html = await fs.readFile(new URL('./fixtures/chat-dom/captured/shared-turn-boundary/02-native-answer-artifact.html', import.meta.url), 'utf8');
+  html = html.replace('<p>Prompt</p>', '<p>Prompt</p><div data-testid="artifact-file"><a href="sandbox:/mnt/data/user.zip" download="user.zip">User attachment</a></div>')
+    .replace('<div data-testid="artifact-file"><a href="sandbox:/mnt/data/result.zip"', '<div data-testid="artifact-file" data-state="generating" aria-busy="true"><a href="sandbox:/mnt/data/result.zip"')
+    .replace('</main>', `<div data-turn-key="turn-later"><div class="group/user-message" data-chatgpt-search-message-ids="later-user"><p>Later prompt</p></div><div class="assistant-branch"><span hidden data-chatgpt-agent-turn-start></span><div data-content-search-unit-key="later-answer" data-chatgpt-search-message-ids="later-answer"><p>Later answer</p></div><div data-testid="artifact-file"><a href="sandbox:/mnt/data/later.zip" download="later.zip">Later download</a></div></div></div></main>`);
+  const result = parser.parseRequestWithoutAssistant(html, { submittedUserTurnKey: 'turn-current::user' });
+  assert.equal(result.artifacts.length, 1);
+  assert.equal(result.artifacts[0].name, 'result.zip');
+  assert.equal(result.artifacts[0].phase, 'GENERATING');
+  assert.ok(!result.answer.includes('Later answer'));
+  assert.ok(!result.raw.includes('User attachment'));
+});
+
+test('native final answer excludes sibling reasoning while its branch remains the progress scope', async () => {
+  const parser = await createAssistantFixtureParser();
+  const html = await fs.readFile(new URL('./fixtures/chat-dom/captured/shared-turn-boundary/03-native-final-reasoning.html', import.meta.url), 'utf8');
+  const result = parser.parseRequestWithoutAssistant(html, { submittedUserTurnKey: 'turn-current::user' });
+  assert.equal(result.answer, 'Actual final answer.');
+  assert.ok(result.progressItems.some((item) => item.text.includes('Visible reasoning status.')));
+  assert.ok(!result.progressItems.some((item) => item.text === 'Prompt'));
+});
+
+test('an optimistic ChatGPT turn cannot become a submitted user anchor before native identity arrives', async () => {
+  const parser = await createAssistantFixtureParser();
+  const root = parser.mount(`<main><div data-turn-key="pending-chatgpt-submit">
+    <div class="group/user-message" data-chatgpt-search-message-ids="optimistic-message"><p>A scheduled wake</p></div>
+  </div></main>`);
+  const user = parser.snapshots.getTurnNodes().find((node) => parser.snapshots.turnRole(node) === 'user');
+  assert.equal(parser.snapshots.turnKey(user), '');
+  const request = {
+    requestId: 'request-native-identity', submittedUserTurnKey: '', submittedUserTurnIndex: -1,
+    pendingSubmittedTurnExpectedText: 'A scheduled wake',
+    update(_type, data) { Object.assign(this, data); },
+  };
+  const turn = root.querySelector('[data-turn-key]');
+  const timer = setTimeout(() => turn.setAttribute('data-turn-key', 'native-user-id'), 10);
+  try {
+    const anchor = await parser.snapshots.waitForSubmittedUserTurnAnchor(request, new Set(), { timeoutMs: 500 });
+    assert.equal(anchor.key, 'native-user-id::user');
+    assert.equal(request.submittedUserTurnKey, 'native-user-id::user');
+  } finally { clearTimeout(timer); }
+});
+
+test('native assistant search-unit discovery excludes user, reasoning and outside-turn decoys', async () => {
+  const parser = await createAssistantFixtureParser();
+  parser.mount(`<main><div data-turn-key="turn-current">
+    <div class="group/user-message" data-content-search-unit-key="user-unit" data-chatgpt-search-message-ids="user-id"><p>User text</p></div>
+    <div data-testid="cot-v5-status" data-content-search-unit-key="reasoning-unit" data-chatgpt-search-message-ids="reasoning-id"><p>Reasoning text</p></div>
+    <div data-content-search-unit-key="assistant-unit" data-chatgpt-search-message-ids="answer-id"><div class="MarkdownRoot-test"><p>Actual answer</p></div></div>
+  </div><nav><div data-content-search-unit-key="sidebar-unit" data-chatgpt-search-message-ids="sidebar-id"><p>Sidebar text</p></div></nav></main>`);
+  const result = parser.snapshots.readAssistantSnapshot({ submittedUserTurnKey: 'turn-current::user' });
+  assert.equal(result.answer, 'Actual answer');
+  assert.equal(result.turnKey, 'turn-current::assistant');
+});
+
+test('a projected user key absent from the current DOM cannot prove prompt submission', async () => {
+  const parser = await createAssistantFixtureParser();
+  parser.mount(`<main><div data-turn-key="native-user">
+    <div class="group/user-message" data-chatgpt-search-message-ids="native-user"><p>A scheduled wake</p></div>
+  </div></main>`);
+  const request = {
+    requestId: 'request-projection-membership', submittedUserTurnKey: 'projected-user', submittedUserTurnIndex: 0,
+    pendingSubmittedTurnExpectedText: 'A scheduled wake',
+    update(_type, data) { Object.assign(this, data); },
+  };
+  const anchor = await parser.snapshots.waitForSubmittedUserTurnAnchor(request, new Set(), { timeoutMs: 20 });
+  assert.equal(anchor, null);
+  assert.equal(request.submittedUserTurnKey, 'projected-user');
+});
 
 test('keyed ChatGPT turns correlate the exact user prompt and assistant branch', async () => {
   const parser = await createAssistantFixtureParser();

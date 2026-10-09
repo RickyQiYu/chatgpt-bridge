@@ -1,21 +1,36 @@
 # Current Session Handoff
 
-## Current source candidates (not deployed)
+## Current source and local canary — 2026-10-09
 
-- Bridge package: `6.4.7`.
-- Extension manifest: `2.4.14`.
-- Content runtime: `4.4.14`.
-- Extension protocol: `5` only.
-- Background persistence schema: `6` only.
-- Workflow runtime schema: `3` only.
-- Interactive dependency: exact `terlio.js@1.2.1`.
-- npm packages use the public npm registry; Zipflow uses a pinned public GitHub codeload archive.
+- Bridge package: 6.4.16.
+- Extension manifest: 2.4.19.
+- Content runtime: 4.4.19.
+- Extension protocol: 5 only.
+- Background persistence schema: 6 only.
+- Workflow runtime schema: 3 only.
 
-These versions are source candidates in this checkout only. They are not deployed, and this handoff does not assert that they are installed in a live browser profile.
+This source candidate fixes two observed ChatGPT DOM changes. It rejects the optimistic `pending-chatgpt-submit` turn identity until a native user key is present, and locates a native final assistant message when user, thought controls and answer are siblings under a shared parent. Submission waiting and read-only prompt/steering effect reconciliation both revalidate the projected user key against a matching new record in the current DOM sample. Progress does not borrow a user-containing parent, and marker-owned assistant branches preserve sibling output artifacts. The native final message owns answer text separately from the containing progress/artifact branch. Hash-only recovery without bound expected prompt text remains uncertain; missing DOM or prior submission evidence cannot become a not-started proof from a matching draft. The exact prompt, conversation, response interval and lease boundaries remain in force.
 
-Content runtime `4.4.14` reports the primary composer action and draft presence, then checks again before submitting a prompt. During asynchronous writes it follows the live composer node if ChatGPT replaces the DOM element. It accepts only the exact pending prompt or the original empty state; a different draft remains protected. Send/voice control lookup is scoped to the editor form and verified ChatGPT main surface, including localized Chinese voice controls. The MAIN-world setter requires full whitespace-normalized equality and clears partial editor blocks in its fallback. Current-turn discovery skips thought-duration controls at assistant turn markers and reads the final Markdown response body. The Bridge requires a fresh, stable Voice-idle observation with an empty composer before releasing a stale request lease. Send, Voice with draft text, Stop, and unknown states keep the tab unavailable. This source candidate is not deployed yet.
+The tested source 79650cb131d94ceac27f2febc54d1eca02b3c3c9 is deployed locally: Bridge 6.4.16, extension 2.4.19 and content 4.4.19. The stable extension was reloaded through canonical extension.reload, both canonical attachments report the new compatible versions, and the idle server LaunchAgent restarted. Current native user/assistant keys and nonempty answers are observed. Final source review found no remaining findings. PR #14 remains OPEN pending local runtime closeout. Physical cleanup ownership and child gates remain in force.
 
-The `6.4.7` source candidate covers multiline prompt verification, partial ProseMirror fallback, and current-turn marker selection when the marker sits beside a thought-duration control. Regression coverage confirms the complete Markdown answer/footer is retained for keyed and canonical-message paths, thought-only controls remain `ASSISTANT_PLACEHOLDER` in keyed and legacy wrappers, and image-only Markdown responses remain final. `npm test` passes (1,427 passed, 2 skipped); `npm run check` passes; `npm run check:quality` passes with the repository's 11 over-target line-count warnings, all below the hard limit; and `git diff --check` passes. A local live run of the prior `6.4.6` candidate proved `prompt.sent` for both wake sessions but found the Bridge's final observation reduced each Planner reply to its thought-duration control; checkpoint return remained pending. No live deployment of this `6.4.7` candidate has been performed.
+## Current external evidence
+
+Wakes 156/178 returned valid checkpoints. Natural subsequent pairs 157/179 and 158/180 were sent at the configured 20-minute cadence. The persistent ChatGPT messages for 158/180 contain both submitted user prompts and final assistant roots, but their optimistic projected user keys no longer exist. Their actual final assistant text does not contain a complete checkpoint footer. Bridge cannot fabricate a checkpoint or infer submission from stale indices.
+
+The original canonical tabs disappeared after the prior operator turn. Bridge recorded both 158/180 turns as failed at 2026-10-09T04:44:20Z. They are terminal records, not active requests to cancel or resend. Accepted Governance 0.27.6 / main@ad8ce6e0e423c0939f3207f0f0114f32f8bfbc02 is deployed in the collector. It retired both old pending entries only after exact turn ID, stored source-client and prompt-digest readback, with reason turn_failed. New natural sequences 159/181 were sent at 2026-10-09T06:07:30Z and completed at 06:08:24Z / 06:08:10Z. Both actual final messages omit a complete checkpoint footer; the host retired those pending returns with footer_missing and now waits for the next cadence. Cached 156/178 checkpoints remain unchanged, ambiguous_send is false and no request/command is active. No old sequence was replayed or decremented.
+
+Browser-extension automation can inspect the bounded semantic DOM even when the native Mac app surface is unavailable. The two canonical conversations were reopened in Chrome tabs 1092118115 and 1092118118 and marked as deliverables so operator-turn cleanup preserves them. Both clients report ready and compatible with no active request. Keep these runtime session tabs retained at handoff.
+
+The Codex worker consumed and delivered real canonical Issue-v2 tasks #640 for Governance and #641 for Voice Terminal, with exact seals, claims and progress. #640 delivered source head 8c8d8f6c with partial validation only because its sandbox denied localhost sockets; Planner follow-up passed 83 tests / 73 subtests and the full repository/worker suite passed 684 tests / 395 subtests. #641 delivered source head 0f4cae60 and reconciles the stale Voice Terminal #584 handoff against the actual #633 ambiguous and #637 invalid-seal frontier. Governance PR #642 and Voice Terminal PR #157 are merged with successful PR/main checks; #640/#641 are RECONCILED / CLOSED(completed). The host worker doctor remains ready; its 30-second scheduler polls normally. #633 is non-retryable after an interrupted claim, and #637 has a body/seal mismatch and no valid approval. These Issues do not authorize ADB, device, Gateway or HIL execution.
+
+A matching composer draft alone is not proof that prompt or steering submission never started; recovery stays uncertain without bound positive turn evidence.
+
+## Verification and next actions
+
+The original DOM regressions reproduced the failures before implementation. Review additionally reproduced user-progress contamination, missing sibling artifacts and phantom-key effect success; new regressions cover those paths, READY/GENERATING artifact ownership, and current-DOM prompt/steering evidence. The focused parser, admission, recovery, snapshot, observer, compatibility and effect matrix passed 111 tests. Full `npm test` passed 1,471 tests with 2 skips and no failures. `npm run check` passed syntax/unresolved-identifier checks for 612 JavaScript files and package contents; `npm run check:quality` passed with 11 existing below-hard-limit size warnings; `git diff --check` passed. Follow-up review covers the final answer/progress split, production-shaped hash-only recovery, and prior-submission/read-failure draft handling. Final source review and live compatibility/first-pair completion are verified. The second natural cadence and final runtime closeout remain pending.
+
+1. Observe natural sequences 160/182 at or after 2026-10-09T06:27:30Z. Verify exact terminal turns, empty composers, no held pending return and valid checkpoint acceptance or honest cold-refresh fallback.
+2. Record the second-cycle evidence, retain both canonical runtime tabs and publish the final source/runtime handoff before goal completion.
 
 ## Historical session notes
 

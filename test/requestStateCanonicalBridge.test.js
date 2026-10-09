@@ -311,6 +311,9 @@ test('stable Protocol 5 observations are finalized by the server before the tab 
   const releaseIndex = hub.sent.findIndex((entry) => entry.payload.type === 'request.release' && entry.payload.requestId === prompt.requestId);
   assert.ok(releaseIndex >= 0);
   assert.equal(hub.sent[releaseIndex].payload.terminalCode, 'completed');
+  assert.equal(hub.sent.filter((entry) => entry.payload.type === 'request.release'
+    && entry.payload.requestId === prompt.requestId).length, 1,
+  'canonical terminal completion must own one release command');
   assert.equal(bridge.requestDiagnostics().some((item) => item.requestId === prompt.requestId), false);
 });
 

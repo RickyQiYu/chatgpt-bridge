@@ -262,7 +262,8 @@ export function activeRequestChildren(state, lease) {
     && command.requestId === requestId
     && command.leaseId === leaseId
     && [CommandStatus.REGISTERED, CommandStatus.DISPATCHED, CommandStatus.ACCEPTED].includes(command.status)
-    && command.commandType !== 'request.release');
+    && command.commandType !== 'request.release'
+    && !(command.operation === 'read' && command.reconcilePolicy === 'effect_evidence'));
   const effects = Object.values(state.effects || {}).filter((effect) => effect
     && effect.requestId === requestId
     && effect.leaseId === leaseId
