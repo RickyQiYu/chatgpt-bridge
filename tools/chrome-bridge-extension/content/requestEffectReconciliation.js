@@ -202,9 +202,6 @@
           evidence.submittedTurnReadFailed = true;
         }
         const submittedTurnIsNew = Boolean(currentAnchor?.key && currentAnchor.key === request.submittedUserTurnKey);
-        const unsubmittedDraftProved = Boolean(!request.submittedUserTurnKey
-          && !evidence.submittedTurnReadFailed && typeof readCurrentSubmittedUserTurnAnchor === 'function'
-          && expectedText && currentComposerText === expectedText);
         Object.assign(evidence, {
           expectedTextLength: expectedText.length,
           composerTextLength: currentComposerText.length,
@@ -217,14 +214,9 @@
             outcome = 'succeeded'; reason = 'steer_response_epoch_committed';
           } else if (pendingBaseline.size && submittedTurnIsNew) {
             outcome = 'succeeded'; reason = 'new_steer_user_turn_observed';
-          } else if (unsubmittedDraftProved
-            && !(targetResponseEpoch > 0 && Number(request.responseEpoch || 0) >= targetResponseEpoch)) {
-            outcome = 'not_started'; reason = 'expected_steer_still_in_composer';
           } else reason = 'steer_submission_not_provable';
         } else if (submittedTurnIsNew) {
           outcome = 'succeeded'; reason = 'submitted_user_turn_observed';
-        } else if (unsubmittedDraftProved) {
-          outcome = 'not_started'; reason = 'expected_prompt_still_in_composer';
         } else reason = 'prompt_submission_not_provable';
       } else if (effectType === 'prompt.cancel') {
         const stillGenerating = Boolean(findStopButton?.() || isGenerating?.());

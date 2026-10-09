@@ -143,10 +143,10 @@ const cases = [
     outcome: 'succeeded', reason: 'submitted_user_turn_observed',
   },
   {
-    name: 'prompt submit is proved not started when exact text remains in composer',
+    name: 'matching composer text alone leaves prompt submission uncertain',
     options: { composerText: 'hello' },
     payload: { effectType: 'prompt.submit', evidence: { message: 'hello' } },
-    outcome: 'not_started', reason: 'expected_prompt_still_in_composer',
+    outcome: 'uncertain', reason: 'prompt_submission_not_provable',
   },
   {
     name: 'prompt submit remains uncertain without a turn or composer proof',
@@ -245,6 +245,20 @@ test('production-shaped hash-only recovery cannot treat empty expected text as a
       evidence: effectType === 'prompt.submit' ? null : { messageLength: 5, previousResponseEpoch: 1, targetResponseEpoch: 2 } });
       assert.equal(result.reconciliationOutcome, 'uncertain');
     });
+  }
+});
+
+test('an empty projection cannot prove no send when a matching new native user exists', async () => {
+  const parser = await createAssistantFixtureParser();
+  parser.mount('<main><div data-turn-key="native-user"><div class="group/user-message" data-chatgpt-search-message-ids="native-user"><p>hello</p></div></div></main>');
+  for (const effectType of ['prompt.submit', 'prompt.steer']) {
+    const result = await makeHarness({ composerText: 'hello', request: {
+      requestId: 'request-1', phase: 'waiting_for_response', options: {},
+      submittedUserTurnKey: '', responseEpoch: 1,
+      pendingSubmittedTurnBaseline: new Set(['earlier-user']), pendingSubmittedTurnExpectedText: 'hello',
+    }, readCurrentSubmittedUserTurnAnchor: (...args) => parser.snapshots.readCurrentSubmittedUserTurnAnchor(...args),
+    }).reconcile({ effectType, evidence: { message: 'hello', targetResponseEpoch: 2 } });
+    assert.equal(result.reconciliationOutcome, 'uncertain', effectType);
   }
 });
 

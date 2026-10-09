@@ -114,6 +114,8 @@ Turn-owned errors and approval controls affect only their owning turn; page-leve
 signals outside turns remain available. Response signatures retain exact parsed
 text, including case, line breaks and code indentation.
 
+A matching composer draft alone is not proof that prompt or steering submission never started; recovery stays uncertain without bound positive turn evidence.
+
 ## 6. Assistant phases
 
 The normalized phases are:
