@@ -7,7 +7,9 @@
   const USER_TURN_MESSAGE_SELECTOR = '[data-chatgpt-search-message-ids]';
   const ASSISTANT_TURN_START_SELECTOR = '[data-chatgpt-agent-turn-start]';
   const ASSISTANT_MESSAGE_SELECTOR = '[data-message-author-role="assistant"]';
-  const TURN_SELECTOR = `${LEGACY_TURN_SELECTOR},[data-turn-key],${USER_TURN_MESSAGE_SELECTOR},${ASSISTANT_TURN_START_SELECTOR},${ASSISTANT_MESSAGE_SELECTOR}`;
+  const ASSISTANT_SEARCH_MESSAGE_SELECTOR = '[data-content-search-unit-key][data-chatgpt-search-message-ids]';
+  const TRANSIENT_TURN_KEY = 'pending-chatgpt-submit';
+  const TURN_SELECTOR = `${LEGACY_TURN_SELECTOR},[data-turn-key],${USER_TURN_MESSAGE_SELECTOR},${ASSISTANT_TURN_START_SELECTOR},${ASSISTANT_MESSAGE_SELECTOR},${ASSISTANT_SEARCH_MESSAGE_SELECTOR}`;
 
   function createCurrentTurnDom({
     normalizeText = (value) => String(value || '').replace(/\s+/g, ' ').trim(),
@@ -59,6 +61,14 @@
       return !interactiveOnlyText(node) && hasResponseBody(node);
     }
 
+    function isCurrentAssistantMessage(node) {
+      if (!node?.matches?.(ASSISTANT_SEARCH_MESSAGE_SELECTOR) || isCurrentUserMessage(node)) return false;
+      if (!node.closest?.('[data-turn-key]')) return false;
+      if (node.closest?.('[class~="group/user-message"], [data-turn="user"], [data-message-author-role="user"], [data-testid^="cot-v5-"], .reasoning-summary, .loading-shimmer-tertiary, button, [role="button"]')) return false;
+      if (Array.from(node.querySelectorAll?.(USER_TURN_MESSAGE_SELECTOR) || []).some(isCurrentUserMessage)) return false;
+      return hasResponseText(node);
+    }
+
     function currentAssistantNodeFromMarker(marker, turnContainer, userMarkers = []) {
       if (!marker) return null;
       let current = marker;
@@ -91,6 +101,9 @@
       if (isCredibleAssistantNode(root)) return root;
       const legacy = Array.from(root.querySelectorAll?.('[data-message-author-role="assistant"]') || []).find(isCredibleAssistantNode);
       if (legacy) return legacy;
+      const nativeMessage = Array.from(root.querySelectorAll?.(ASSISTANT_SEARCH_MESSAGE_SELECTOR) || [])
+        .find((node) => isCurrentAssistantMessage(node) && isCredibleAssistantNode(node));
+      if (nativeMessage) return nativeMessage;
       for (const marker of Array.from(root.querySelectorAll?.(ASSISTANT_TURN_START_SELECTOR) || []).reverse()) {
         const assistant = currentAssistantNode(marker);
         if (assistant && isCredibleAssistantNode(assistant)) return assistant;
@@ -105,15 +118,19 @@
         .filter((node) => String(node.getAttribute('data-turn-key') || '').trim());
       const userMarkers = nodes.filter(isCurrentUserMessage);
       const assistantMarkers = nodes.filter((node) => node.matches?.(ASSISTANT_TURN_START_SELECTOR));
+      const assistantMessages = nodes.filter(isCurrentAssistantMessage);
       const currentTurns = [];
 
       for (const turnContainer of turnContainers) {
         const users = userMarkers.filter((node) => node.closest?.('[data-turn-key]') === turnContainer);
         const assistants = assistantMarkers.filter((node) => node.closest?.('[data-turn-key]') === turnContainer);
-        currentTurns.push(...users);
+        const ownedMessages = assistantMessages.filter((node) => node.closest?.('[data-turn-key]') === turnContainer);
+        const messages = ownedMessages.filter((node) => !ownedMessages.some((parent) => parent !== node && parent.contains?.(node)));
+        currentTurns.push(...users, ...messages);
         for (const marker of assistants) {
           const assistantNode = currentAssistantNodeFromMarker(marker, turnContainer, users);
-          if (assistantNode) currentTurns.push(assistantNode);
+          if (assistantNode && !messages.some((message) => assistantNode === message
+            || assistantNode.contains?.(message) || message.contains?.(assistantNode))) currentTurns.push(assistantNode);
         }
       }
 
@@ -133,6 +150,7 @@
 
     function turnRole(turn) {
       if (isCurrentUserMessage(turn)) return 'user';
+      if (isCurrentAssistantMessage(turn)) return 'assistant';
       if (turn?.matches?.(ASSISTANT_TURN_START_SELECTOR)
         || (turn?.querySelector?.(ASSISTANT_TURN_START_SELECTOR)
           && !isCurrentUserMessage(turn)
@@ -146,7 +164,8 @@
     }
 
     function currentTurnIdentity(turn) {
-      return String(turn?.closest?.('[data-turn-key]')?.getAttribute?.('data-turn-key') || '').trim();
+      const key = String(turn?.closest?.('[data-turn-key]')?.getAttribute?.('data-turn-key') || '').trim();
+      return key === TRANSIENT_TURN_KEY ? '' : key;
     }
 
     function currentTurnContainer(turn) {
@@ -167,7 +186,7 @@
         || finalNode?.getAttribute?.('data-message-id')
         || turn.getAttribute?.('data-message-id')
         || turn.getAttribute?.('data-turn-id-container');
-      if (existingKey) return existingKey;
+      if (existingKey && existingKey !== TRANSIENT_TURN_KEY) return existingKey;
       return currentTurnKey(turn, role);
     }
 
@@ -185,7 +204,7 @@
     }
 
     function isCurrentAssistantNode(node) {
-      return Boolean(node?.matches?.(ASSISTANT_TURN_START_SELECTOR)
+      return Boolean(isCurrentAssistantMessage(node) || node?.matches?.(ASSISTANT_TURN_START_SELECTOR)
         || (node?.querySelector?.(ASSISTANT_TURN_START_SELECTOR)
           && !isCurrentUserMessage(node)
           && !Array.from(node.querySelectorAll?.(USER_TURN_MESSAGE_SELECTOR) || []).some(isCurrentUserMessage)));

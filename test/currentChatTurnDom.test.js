@@ -1,6 +1,68 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
 import test from 'node:test';
 import { createAssistantFixtureParser } from './helpers/offlineChatDom.js';
+
+test('shared user and thought parent still selects the native assistant message root', async () => {
+  const parser = await createAssistantFixtureParser();
+  const base = new URL('./fixtures/chat-dom/captured/shared-turn-boundary/', import.meta.url);
+  const contract = JSON.parse(await fs.readFile(new URL('01-shared-turn.contract.json', base), 'utf8'));
+  const html = await fs.readFile(new URL(contract.source.html, base), 'utf8');
+  const result = parser.parseRequestWithoutAssistant(html, { submittedUserTurnKey: contract.submittedUserTurnKey });
+  assert.equal(result.userTurnKey, contract.submittedUserTurnKey);
+  assert.equal(result.turnKey, contract.assistantTurnKey);
+  for (const text of contract.answerIncludes) assert.ok(result.answer.includes(text), text);
+  for (const text of contract.answerExcludes) assert.ok(!result.answer.includes(text), text);
+  assert.equal(parser.snapshots.getTurnNodes().filter((node) => parser.snapshots.turnRole(node) === 'assistant').length, 1);
+});
+
+test('an optimistic ChatGPT turn cannot become a submitted user anchor before native identity arrives', async () => {
+  const parser = await createAssistantFixtureParser();
+  const root = parser.mount(`<main><div data-turn-key="pending-chatgpt-submit">
+    <div class="group/user-message" data-chatgpt-search-message-ids="optimistic-message"><p>A scheduled wake</p></div>
+  </div></main>`);
+  const user = parser.snapshots.getTurnNodes().find((node) => parser.snapshots.turnRole(node) === 'user');
+  assert.equal(parser.snapshots.turnKey(user), '');
+  const request = {
+    requestId: 'request-native-identity', submittedUserTurnKey: '', submittedUserTurnIndex: -1,
+    pendingSubmittedTurnExpectedText: 'A scheduled wake',
+    update(_type, data) { Object.assign(this, data); },
+  };
+  const turn = root.querySelector('[data-turn-key]');
+  const timer = setTimeout(() => turn.setAttribute('data-turn-key', 'native-user-id'), 10);
+  try {
+    const anchor = await parser.snapshots.waitForSubmittedUserTurnAnchor(request, new Set(), { timeoutMs: 500 });
+    assert.equal(anchor.key, 'native-user-id::user');
+    assert.equal(request.submittedUserTurnKey, 'native-user-id::user');
+  } finally { clearTimeout(timer); }
+});
+
+test('native assistant search-unit discovery excludes user, reasoning and outside-turn decoys', async () => {
+  const parser = await createAssistantFixtureParser();
+  parser.mount(`<main><div data-turn-key="turn-current">
+    <div class="group/user-message" data-content-search-unit-key="user-unit" data-chatgpt-search-message-ids="user-id"><p>User text</p></div>
+    <div data-testid="cot-v5-status" data-content-search-unit-key="reasoning-unit" data-chatgpt-search-message-ids="reasoning-id"><p>Reasoning text</p></div>
+    <div data-content-search-unit-key="assistant-unit" data-chatgpt-search-message-ids="answer-id"><div class="MarkdownRoot-test"><p>Actual answer</p></div></div>
+  </div><nav><div data-content-search-unit-key="sidebar-unit" data-chatgpt-search-message-ids="sidebar-id"><p>Sidebar text</p></div></nav></main>`);
+  const result = parser.snapshots.readAssistantSnapshot({ submittedUserTurnKey: 'turn-current::user' });
+  assert.equal(result.answer, 'Actual answer');
+  assert.equal(result.turnKey, 'turn-current::assistant');
+});
+
+test('a projected user key absent from the current DOM cannot prove prompt submission', async () => {
+  const parser = await createAssistantFixtureParser();
+  parser.mount(`<main><div data-turn-key="native-user">
+    <div class="group/user-message" data-chatgpt-search-message-ids="native-user"><p>A scheduled wake</p></div>
+  </div></main>`);
+  const request = {
+    requestId: 'request-projection-membership', submittedUserTurnKey: 'projected-user', submittedUserTurnIndex: 0,
+    pendingSubmittedTurnExpectedText: 'A scheduled wake',
+    update(_type, data) { Object.assign(this, data); },
+  };
+  const anchor = await parser.snapshots.waitForSubmittedUserTurnAnchor(request, new Set(), { timeoutMs: 20 });
+  assert.equal(anchor, null);
+  assert.equal(request.submittedUserTurnKey, 'projected-user');
+});
 
 test('keyed ChatGPT turns correlate the exact user prompt and assistant branch', async () => {
   const parser = await createAssistantFixtureParser();

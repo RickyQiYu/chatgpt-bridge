@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "html": "01-shared-turn.html",
+    "provenance": "Sanitized structural reproduction of the 2026-10-09 Planner DOM: user, thought marker and native assistant search-unit root share one parent. All message content and identifiers are synthetic."
+  },
+  "submittedUserTurnKey": "turn-current::user",
+  "assistantTurnKey": "turn-current::assistant",
+  "answerIncludes": ["A completed Planner response.", "[planner-runtime-checkpoint-v1]", "\"wake_sequence\":1", "[/planner-runtime-checkpoint-v1]"],
+  "answerExcludes": ["A scheduled wake", "Thought for 7 seconds"]
+}

@@ -1,33 +1,37 @@
 # Current Session Handoff
 
-## Current source and local canary — 2026-10-09
+## Current source candidate — 2026-10-09
 
-- Bridge package: 6.4.15.
-- Extension manifest: 2.4.18.
-- Content runtime: 4.4.18.
+- Bridge package: 6.4.16.
+- Extension manifest: 2.4.19.
+- Content runtime: 4.4.19.
 - Extension protocol: 5 only.
 - Background persistence schema: 6 only.
 - Workflow runtime schema: 3 only.
 
-The candidate adds typed, exact pre-dispatch results for lease recovery rejections and classifies a persisted request command as non-physical only when its contract says `operation: read` and `reconcilePolicy: effect_evidence`. It carries bounded reason codes and exact request/lease/server/epoch identity to Bridge. This classification does not clear a lease: active write commands, physical effects, and downloads still block, and the Bridge stale-release path still requires exact identity, canonical terminal state, no active server request, and a fresh idle observation.
+This source candidate fixes two observed ChatGPT DOM changes. It rejects the optimistic `pending-chatgpt-submit` turn identity until a native user key is present, and locates a native final assistant message when user, thought controls and answer are siblings under a shared parent. Submission evidence also revalidates the projected user key against a matching new record in the current DOM sample. The exact prompt, conversation, response interval and lease boundaries remain in force.
 
-The stable unpacked-extension directory matched 2.4.18; Chrome reloaded it, both canonical Planner tabs were refreshed to content 4.4.18, and the Bridge LaunchAgent restarted on 6.4.15. Both clients report ready/compatible, with Voice composer, no draft, no active request, and no pending Bridge command. The source remains an unmerged local canary; PR #14 is still OPEN.
+The candidate is not deployed yet. The local canary remains Bridge 6.4.15, extension 2.4.18 and content 4.4.18. PR #14 remains OPEN with the earlier typed read-only command/physical-child fix. That fix does not clear leases or weaken physical cleanup ownership.
 
-Natural wakes 156/178 completed in their canonical sessions with valid checkpoints and ambiguous_send=false. After deployment, the host naturally recorded `sent` for Governance 157 and Voice Terminal 179 on successive polls; both canonical Bridge turns completed. Neither latest Planner reply included a complete `planner-runtime-checkpoint-v1` footer, so local checkpoint files remain at 156/178.
+## Current external evidence
 
-The next natural pair 158/180 also advanced at the 20-minute cadence and the host recorded `sent` for both. These Bridge requests remain `submitted` in `waiting_for_assistant_turn`: the extension snapshot reports `submitted_user_turn_not_found`, `assistantNodeCount` 4/5, `answerLength=0`, and no assistant turn key; the watchdog repeatedly receives zero-length forced snapshots. The Chrome accessibility tree shows Planner reply text after each prompt, but Bridge cannot prove the exact submitted-user boundary. Subsequent host polls return `pending_checkpoint` for both projects, so no more wakes are sent. Do not resend either wake, cancel either request, or clear/release the active leases. The latest CUA call reports the Mac locked; resume exact read-only DOM boundary inspection when it is accessible.
+Wakes 156/178 returned valid checkpoints. Natural subsequent pairs 157/179 and 158/180 were sent at the configured 20-minute cadence. The persistent ChatGPT messages for 158/180 contain both submitted user prompts and final assistant roots, but their optimistic projected user keys no longer exist. Their actual final assistant text does not contain a complete checkpoint footer. Bridge cannot fabricate a checkpoint or infer submission from stale indices.
 
-The exact pre-fix tab ledgers contained one dispatched `request.effect.reconcile` command per lease, explicitly persisted as `operation: read` plus `reconcilePolicy: effect_evidence`, with no active physical effect or download. The 6.4.15/2.4.18 candidate excludes only that typed read-only evidence command from the physical-child gate; active writes, other commands, effects, and downloads still block. Do not clear extension storage or release through another path.
+The original canonical tabs disappeared after the prior operator turn. Bridge recorded both 158/180 turns as failed at 2026-10-09T04:44:20Z. They are terminal records, not active requests to cancel or resend. The registry still retains their pending checkpoint entries because its current collector returns `turn_not_final` for failed turns. Recovery Issue #640 addresses exact terminal failure retirement after validating the stored turn, source client and prompt digest. No sequence decrement, prompt replay or manufactured checkpoint is permitted.
 
-The latest source changes distinguish a typed pre-dispatch child-gate rejection from an ambiguous release and keep evidence-only commands separate from physical children. The new regression first failed with `lease_children_active`; the focused release/fault/compatibility suites pass (49/49). Full `npm test` passes (1,448 passed, 2 skipped); `npm run check` passes for 612 JavaScript files and package contents; `npm run check:quality` exits 0 with 11 below-hard-limit warnings; `git diff --check` passes. PR #14 is OPEN at head e744bd3 (the tested code commit is c56bddc); the source is deployed locally and has not been merged.
+Browser-extension automation can inspect the bounded semantic DOM even when the native Mac app surface is unavailable. The two canonical conversations were reopened in Chrome tabs 1092118115 and 1092118118 and marked as deliverables so operator-turn cleanup preserves them. Both clients report ready and compatible with no active request. Keep these runtime session tabs retained at handoff.
 
-Codex dispatch configuration permits Governance and Voice Terminal, the worker source is at accepted Governance main 93b24ab2, and GitHub CLI authenticated calls succeed. The canonical normal dispatch queue is empty. The host worker doctor is ready and its 30-second LaunchAgent continues polling; #633 remains ambiguous/non-retryable and #637 remains invalid because its body digest differs from its seal and it lacks a valid approval. No ADB/device/Gateway/HIL execution is in scope.
+The Codex worker is actively executing real canonical Issue-v2 tasks #640 for Governance and #641 for Voice Terminal, with exact seals, claims and fresh progress. #641 reconciles the stale Voice Terminal #584 handoff against the actual #633 ambiguous and #637 invalid-seal frontier. The host worker doctor remains ready; its 30-second scheduler polls normally. #633 is non-retryable after an interrupted claim, and #637 has a body/seal mismatch and no valid approval. These Issues do not authorize ADB, device, Gateway or HIL execution.
 
-## Exact next actions
+## Verification and next actions
 
-1. After the Mac is accessible, inspect only the semantic turn boundary and bounded IDs/statuses for active requests 158/180. Determine why the visible Planner reply nodes are absent from the content `TurnDom` observation. Do not read or publish prompt/answer text.
-2. Reconcile 158/180 only through exact terminal/effect evidence. Do not replay either prompt or release the leases while the canonical requests remain active; the next cadence is not proven healthy while they remain submitted.
-3. Re-read the canonical dispatch queue. The Codex worker is healthy but has no open Issue to consume now; do not fabricate one. Keep #633 non-retryable and #637 blocked until a new sealed request and protocol-required direct-human authority exist.
+The four new DOM regressions reproduced the failures before the implementation change. The focused parser, turn reliability, admission, reload recovery, snapshot, observer and compatibility suite passed 71 tests. Full `npm test` passed 1,452 tests with 2 skips and no failures. `npm run check` passed syntax/unresolved-identifier checks for 612 JavaScript files and package contents; `npm run check:quality` passed with 11 existing below-hard-limit size warnings; `git diff --check` passed. Source review and live deployment verification remain pending.
+
+1. Run the focused compatibility and full package/quality/test checks, then review and publish the candidate.
+2. Deploy via the stable extension installation and canonical extension reload path; verify new version and exact native user/assistant observations without submitting a duplicate prompt.
+3. Review worker deliveries #640/#641. Deploy the tested registry collector fix while preserving sequence, cadence, canonical sessions and stored checkpoint hints.
+4. Observe ordinary new scheduled wakes for both sessions and exact checkpoint readback. Keep the goal active until the wakes and worker recovery are verified.
+
 ## Historical session notes
 
 The versioned entries below record earlier source changes and verification results; they do not describe the current live installation.

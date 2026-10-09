@@ -6,14 +6,16 @@ This project exposes HTTP, OpenAI-compatible, RPC, workflow, and Terlio.js inter
 
 Candidate source versions for this checkout (not a deployment claim):
 
-- bridge package: `6.4.15`;
-- extension: `2.4.18`;
-- content runtime: `4.4.18`;
+- bridge package: `6.4.16`;
+- extension: `2.4.19`;
+- content runtime: `4.4.19`;
 - extension protocol: `5` only;
 - background runtime schema: `6` only;
 - WebSocket endpoint: `/extension/ws`.
 
 No polling, page-context WebSocket, userscript transport, protocol downgrade, alternate request lifecycle, job API, or alternate interactive runtime remains.
+
+Current ChatGPT optimistic turns temporarily use `pending-chatgpt-submit`; that key cannot establish a submitted-user identity. The adapter waits for a native user key and verifies that an already captured key still identifies the matching new user record in the current DOM sample. When user, thought-duration controls and the final response share a parent, the final assistant message is selected from its native content-search/message-id attributes. User, reasoning, control and out-of-turn nodes remain excluded.
 
 These candidate versions describe source files in this checkout; they do not assert that the bundles have been deployed. The Bridge releases a terminal request lease only after an exact, fresh observation shows stable Voice idle with an empty composer. Stop means generation is active; Send means an unsent draft remains and the tab stays unavailable; Voice with draft text and unknown controls also fail closed. Bridge routing and the content executor both check this before writing a prompt. During asynchronous composer writes, the content executor follows the live DOM node and accepts only the exact pending prompt or the original empty state; a different draft remains protected. Send/voice control lookup is scoped to the editor form and verified ChatGPT main surface, including localized Chinese voice controls. The main-world composer setter compares whitespace-normalized text on both sides, requires full equality, and replaces all partial editor blocks in its fallback. Current-turn selection ignores assistant-turn markers that point only at thought-duration controls and continues to the final Markdown response. A request with no confirmed user-turn boundary becomes recoverable uncertainty, while the composer draft is preserved. A liveness deadline may fail a silent request, but it never clicks Stop. The extension background alone proves physical cleanup and emits `lease.released` after that proof. If dispatched cleanup remains ambiguous, the background quarantines the tab and emits `lease.quarantined`; ambiguous cleanup never makes the prompt eligible for replay. If stale recovery is rejected before command dispatch, the extension returns the exact lease identity and a bounded reason code; Bridge settles only that attempt and leaves the lease unchanged. During stale recovery, a persisted command is non-physical only when its contract explicitly has `operation: read` and `reconcilePolicy: effect_evidence`; all other active commands, pending physical effects, and downloads remain blocking. The stale-release coordinator still requires exact lease identity, canonical terminal state, and a fresh idle-composer observation.
 

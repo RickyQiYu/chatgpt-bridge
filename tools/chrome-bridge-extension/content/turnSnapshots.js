@@ -213,7 +213,12 @@ async function waitForSubmittedUserTurnAnchor(request, baselineTurnKeys, { kind 
   const alreadyCaptured = () => {
     const key = String(request?.submittedUserTurnKey || '');
     if (!key || baseline.has(key)) return null;
-    return { key, index: request.submittedUserTurnIndex, reason: 'already_captured_by_dom_monitor' };
+    const current = DOM_PARSER.selectLatestMatchingNewTurnRecord(
+      requestTurnRecords({ includeText: true }), baseline, 'user',
+      String(request?.pendingSubmittedTurnExpectedText || ''),
+    );
+    if (!current || current.key !== key) return null;
+    return { key, index: current.index, reason: 'already_captured_by_dom_monitor' };
   };
   const started = Date.now();
   diagnostic(`${kind}.user_turn_anchor_wait.started`, {
