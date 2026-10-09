@@ -72,6 +72,30 @@ test('tab observation core treats a DOM streaming marker as active generation ev
   assert.equal(observation.output.state, 'streaming');
 });
 
+test('tab observation core honors phase-only streaming evidence before declaring a final answer', async () => {
+  const { value: core } = await loadGlobal(
+    'tools/chrome-bridge-extension/observation/tabObservationCore.js',
+    'ChatGptTabObservationCore',
+  );
+  for (const phase of ['ASSISTANT_FINAL_STREAMING', 'ASSISTANT_FINAL_STREAMING_WITH_HISTORY']) {
+    const observation = core.normalizeTabObservation({
+      presence: { documentReadyState: 'complete', chatMainReady: true, composerReady: true },
+      snapshot: {
+        phase,
+        turnKey: 'assistant-partial-footer',
+        answer: '[planner-runtime-checkpoint-v1]\\n{',
+        hasFinalMessage: true,
+        actionBarVisible: true,
+        stopVisible: false,
+        streamingVisible: false,
+      },
+    });
+    assert.equal(observation.generation.state, 'active', `${phase} must not look idle when DOM generation flags lag`);
+    assert.equal(observation.output.state, 'streaming', `${phase} must not be finalized prematurely`);
+    assert.equal(observation.turn.state, 'streaming');
+  }
+});
+
 test('tab observation core preserves the primary composer action independently of generation', async () => {
   const { value: core } = await loadGlobal(
     'tools/chrome-bridge-extension/observation/tabObservationCore.js',

@@ -147,7 +147,7 @@
     const turnContext = input.turnContext && typeof input.turnContext === 'object' ? input.turnContext : {};
     const phase = phaseFacts(snapshot.phase);
     const artifacts = artifactFacts(snapshot.artifacts);
-    const generating = Boolean(input.generating || snapshot.stopVisible || snapshot.streamingVisible || snapshot.hasActiveTool);
+    const generating = Boolean(input.generating || snapshot.stopVisible || snapshot.streamingVisible || snapshot.hasActiveTool || phase.output === OutputState.STREAMING);
     const hasAssistant = Boolean(snapshot.turnKey || snapshot.messageId || snapshot.answer || snapshot.thinking || snapshot.progress || snapshot.phase);
     const documentReadyState = string(presence.documentReadyState);
     const documentState = presence.chatMainReady
