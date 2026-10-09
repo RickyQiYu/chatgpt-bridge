@@ -13,7 +13,37 @@ test('shared user and thought parent still selects the native assistant message 
   assert.equal(result.turnKey, contract.assistantTurnKey);
   for (const text of contract.answerIncludes) assert.ok(result.answer.includes(text), text);
   for (const text of contract.answerExcludes) assert.ok(!result.answer.includes(text), text);
+  assert.ok(!result.progressItems.some((item) => item.text.includes('A scheduled wake')));
+  assert.ok(!result.thinking.includes('A scheduled wake'));
+  assert.ok(!result.progress.includes('A scheduled wake'));
+  assert.ok(!result.progressItems.some((item) => item.text.includes('A completed Planner response.')));
   assert.equal(parser.snapshots.getTurnNodes().filter((node) => parser.snapshots.turnRole(node) === 'assistant').length, 1);
+});
+
+test('native answer discovery preserves sibling artifacts within its owned assistant branch', async () => {
+  const parser = await createAssistantFixtureParser();
+  const html = await fs.readFile(new URL('./fixtures/chat-dom/captured/shared-turn-boundary/02-native-answer-artifact.html', import.meta.url), 'utf8');
+  const result = parser.parseRequestWithoutAssistant(html, { submittedUserTurnKey: 'turn-current::user' });
+  assert.equal(result.answer, 'Answer text\n\n[Download result.zip](sandbox:/mnt/data/result.zip)');
+  assert.equal(result.artifacts.length, 1);
+  assert.equal(result.artifacts[0].name, 'result.zip');
+  assert.equal(result.artifacts[0].phase, 'READY');
+  assert.ok(!result.progressItems.some((item) => item.text === 'Prompt'));
+  assert.equal(parser.snapshots.getTurnNodes().filter((node) => parser.snapshots.turnRole(node) === 'assistant').length, 1);
+});
+
+test('native answer ownership retains generating artifacts and excludes user and future attachments', async () => {
+  const parser = await createAssistantFixtureParser();
+  let html = await fs.readFile(new URL('./fixtures/chat-dom/captured/shared-turn-boundary/02-native-answer-artifact.html', import.meta.url), 'utf8');
+  html = html.replace('<p>Prompt</p>', '<p>Prompt</p><div data-testid="artifact-file"><a href="sandbox:/mnt/data/user.zip" download="user.zip">User attachment</a></div>')
+    .replace('<div data-testid="artifact-file"><a href="sandbox:/mnt/data/result.zip"', '<div data-testid="artifact-file" data-state="generating" aria-busy="true"><a href="sandbox:/mnt/data/result.zip"')
+    .replace('</main>', `<div data-turn-key="turn-later"><div class="group/user-message" data-chatgpt-search-message-ids="later-user"><p>Later prompt</p></div><div class="assistant-branch"><span hidden data-chatgpt-agent-turn-start></span><div data-content-search-unit-key="later-answer" data-chatgpt-search-message-ids="later-answer"><p>Later answer</p></div><div data-testid="artifact-file"><a href="sandbox:/mnt/data/later.zip" download="later.zip">Later download</a></div></div></div></main>`);
+  const result = parser.parseRequestWithoutAssistant(html, { submittedUserTurnKey: 'turn-current::user' });
+  assert.equal(result.artifacts.length, 1);
+  assert.equal(result.artifacts[0].name, 'result.zip');
+  assert.equal(result.artifacts[0].phase, 'GENERATING');
+  assert.ok(!result.answer.includes('Later answer'));
+  assert.ok(!result.raw.includes('User attachment'));
 });
 
 test('an optimistic ChatGPT turn cannot become a submitted user anchor before native identity arrives', async () => {

@@ -125,13 +125,13 @@
         const users = userMarkers.filter((node) => node.closest?.('[data-turn-key]') === turnContainer);
         const assistants = assistantMarkers.filter((node) => node.closest?.('[data-turn-key]') === turnContainer);
         const ownedMessages = assistantMessages.filter((node) => node.closest?.('[data-turn-key]') === turnContainer);
-        const messages = ownedMessages.filter((node) => !ownedMessages.some((parent) => parent !== node && parent.contains?.(node)));
-        currentTurns.push(...users, ...messages);
-        for (const marker of assistants) {
-          const assistantNode = currentAssistantNodeFromMarker(marker, turnContainer, users);
-          if (assistantNode && !messages.some((message) => assistantNode === message
-            || assistantNode.contains?.(message) || message.contains?.(assistantNode))) currentTurns.push(assistantNode);
-        }
+        // Keep a marker-owned assistant branch when it encloses the native
+        // answer: its sibling artifacts still belong to the same response.
+        // The marker walk refuses any parent containing a user message.
+        const branches = assistants.map((marker) => currentAssistantNodeFromMarker(marker, turnContainer, users)).filter(Boolean);
+        const candidates = [...new Set([...branches, ...ownedMessages])];
+        const responses = candidates.filter((node) => !candidates.some((parent) => parent !== node && parent.contains?.(node)));
+        currentTurns.push(...users, ...responses);
       }
 
       // Preserve the legacy observer fallback for assistant message roots that

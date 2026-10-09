@@ -306,7 +306,7 @@
   });
   const {
     simpleHash, domPathForNode, getTurnNodes, turnKey, turnRole, getAssistantNodes, getAssistantNodeFromTurn, readUserTurnPromptText,
-    waitForSubmittedUserTurnAnchor, refreshRequestTurnAnchors, readLatestAssistantSnapshot, readAssistantSnapshotByTurnKey,
+    waitForSubmittedUserTurnAnchor, readCurrentSubmittedUserTurnAnchor, refreshRequestTurnAnchors, readLatestAssistantSnapshot, readAssistantSnapshotByTurnKey,
     readRecentAssistantSnapshots, readAssistantSnapshot, readAssistantNodeSnapshot, readSubmittedUserTurnError, attachDomObserver, collectAndEmit,
     releaseRequest, scheduleCollect, startDomMonitor, getCurrentSession,
     conversationIdFromUrl, handleSessionsList, handleSessionsNew, handleSessionsSelect, handleSessionsDelete,
@@ -399,6 +399,7 @@
     pagePresence,
     readIntelligenceState,
     readSubmittedUserTurnError,
+    readCurrentSubmittedUserTurnAnchor,
   });
   const { handlePassivePromptSubmit, handlePromptCancel, handlePromptSend, handlePromptSteer,
     handleRequestRelease, handleRequestResume, handleEffectReconcile } = requestCommandsApi;

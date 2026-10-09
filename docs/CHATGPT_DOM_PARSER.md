@@ -98,7 +98,12 @@ For current keyed ChatGPT turns, a final assistant root can carry both
 its parent with the user bubble and thought-duration controls. Discovery requires
 a substantive response body within the same keyed turn, rejects user, reasoning
 and control ownership, and deduplicates nested message roots. An assistant-start
-marker remains a fallback and never includes the sibling user prompt.
+marker preserves a larger explicitly owned assistant branch when it encloses the
+native answer and sibling output artifacts. Its walk never includes a user
+message. Progress collection stays within that owned scope; a final message root
+cannot borrow its parent as a progress stack. Prompt/steering effect
+reconciliation uses the same currently present matching-new-user evidence as
+submission waiting; projected keys and epochs alone are insufficient.
 
 Turn-owned errors and approval controls affect only their owning turn; page-level
 signals outside turns remain available. Response signatures retain exact parsed
