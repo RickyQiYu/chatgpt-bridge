@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import test from 'node:test';
 import vm from 'node:vm';
@@ -209,6 +210,40 @@ test('submission reconciliation reads matching native users from the current DOM
         }).reconcile({ effectType, evidence: { message: 'hello', targetResponseEpoch: 2 } });
         assert.equal(result.reconciliationOutcome, scenario.outcome, effectType);
       }
+    });
+  }
+});
+
+test('reconciliation keeps prior submission and DOM failures uncertain when the composer matches', async (t) => {
+  for (const effectType of ['prompt.submit', 'prompt.steer']) {
+    for (const mode of ['missing-anchor', 'read-error']) {
+      await t.test(`${effectType}: ${mode}`, async () => {
+        const result = await makeHarness({ composerText: 'hello', request: {
+          requestId: 'request-1', phase: 'waiting_for_response', options: {},
+          submittedUserTurnKey: 'previously-observed-user', responseEpoch: 2,
+        }, readCurrentSubmittedUserTurnAnchor: () => { if (mode === 'read-error') throw new Error('DOM unavailable'); return null; },
+        }).reconcile({ effectType, evidence: { message: 'hello', targetResponseEpoch: 2 } });
+        assert.equal(result.reconciliationOutcome, 'uncertain');
+      });
+    }
+  }
+});
+
+test('production-shaped hash-only recovery cannot treat empty expected text as a wildcard', async (t) => {
+  const promptHash = createHash('sha256').update('hello').digest('hex');
+  for (const effectType of ['prompt.submit', 'prompt.steer']) {
+    await t.test(effectType, async () => {
+      const parser = await createAssistantFixtureParser();
+      parser.mount('<main><div data-turn-key="native-user"><div class="group/user-message" data-chatgpt-search-message-ids="native-user"><p>Different prompt</p></div></div></main>');
+      const result = await makeHarness({ request: {
+        requestId: 'request-1', phase: 'waiting_for_response', options: {},
+        submittedUserTurnKey: 'native-user::user', responseEpoch: 2,
+        baselineTurnKeys: new Set(['earlier-user']), pendingSubmittedTurnExpectedText: '',
+      }, readCurrentSubmittedUserTurnAnchor: (...args) => parser.snapshots.readCurrentSubmittedUserTurnAnchor(...args),
+      }).reconcile({ effectType, preconditions: effectType === 'prompt.submit'
+        ? { promptHash } : { messageHash: promptHash, targetResponseEpoch: 2 },
+      evidence: effectType === 'prompt.submit' ? null : { messageLength: 5, previousResponseEpoch: 1, targetResponseEpoch: 2 } });
+      assert.equal(result.reconciliationOutcome, 'uncertain');
     });
   }
 });

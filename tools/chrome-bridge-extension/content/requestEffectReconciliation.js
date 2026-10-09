@@ -195,11 +195,16 @@
         const pendingBaseline = baselineKeys instanceof Set ? baselineKeys : new Set(baselineKeys);
         let currentAnchor = null;
         try {
-          currentAnchor = readCurrentSubmittedUserTurnAnchor?.(request, pendingBaseline, expectedText) || null;
+          // Recovery descriptors may carry only promptHash/messageHash after
+          // pending text was cleared. Empty text must not match any user turn.
+          if (expectedText) currentAnchor = readCurrentSubmittedUserTurnAnchor?.(request, pendingBaseline, expectedText) || null;
         } catch {
           evidence.submittedTurnReadFailed = true;
         }
         const submittedTurnIsNew = Boolean(currentAnchor?.key && currentAnchor.key === request.submittedUserTurnKey);
+        const unsubmittedDraftProved = Boolean(!request.submittedUserTurnKey
+          && !evidence.submittedTurnReadFailed && typeof readCurrentSubmittedUserTurnAnchor === 'function'
+          && expectedText && currentComposerText === expectedText);
         Object.assign(evidence, {
           expectedTextLength: expectedText.length,
           composerTextLength: currentComposerText.length,
@@ -212,12 +217,13 @@
             outcome = 'succeeded'; reason = 'steer_response_epoch_committed';
           } else if (pendingBaseline.size && submittedTurnIsNew) {
             outcome = 'succeeded'; reason = 'new_steer_user_turn_observed';
-          } else if (expectedText && currentComposerText === expectedText) {
+          } else if (unsubmittedDraftProved
+            && !(targetResponseEpoch > 0 && Number(request.responseEpoch || 0) >= targetResponseEpoch)) {
             outcome = 'not_started'; reason = 'expected_steer_still_in_composer';
           } else reason = 'steer_submission_not_provable';
         } else if (submittedTurnIsNew) {
           outcome = 'succeeded'; reason = 'submitted_user_turn_observed';
-        } else if (expectedText && currentComposerText === expectedText) {
+        } else if (unsubmittedDraftProved) {
           outcome = 'not_started'; reason = 'expected_prompt_still_in_composer';
         } else reason = 'prompt_submission_not_provable';
       } else if (effectType === 'prompt.cancel') {

@@ -103,7 +103,12 @@ native answer and sibling output artifacts. Its walk never includes a user
 message. Progress collection stays within that owned scope; a final message root
 cannot borrow its parent as a progress stack. Prompt/steering effect
 reconciliation uses the same currently present matching-new-user evidence as
-submission waiting; projected keys and epochs alone are insufficient.
+submission waiting; projected keys and epochs alone are insufficient. When
+production recovery carries only a bound hash and no expected prompt text is
+available, this reader cannot establish text binding and stays uncertain.
+Missing/degraded DOM or prior observed submission cannot prove no send merely
+because the composer currently matches. The native final message remains the
+answer extraction root even when its enclosing branch owns progress/artifacts.
 
 Turn-owned errors and approval controls affect only their owning turn; page-level
 signals outside turns remain available. Response signatures retain exact parsed

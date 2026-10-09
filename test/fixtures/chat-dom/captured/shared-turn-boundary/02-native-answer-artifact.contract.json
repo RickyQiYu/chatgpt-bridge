@@ -2,7 +2,7 @@
   "source": {"html": "02-native-answer-artifact.html", "kind": "sanitized-synthetic", "privacy": "No user or account data; generic native IDs and placeholder content."},
   "submittedUserTurnKey": "turn-current::user",
   "assistantTurnKey": "turn-current::assistant",
-  "answer": "Answer text\n\n[Download result.zip](sandbox:/mnt/data/result.zip)",
+  "answer": "Answer text",
   "artifactNames": ["result.zip"],
   "progressExcludes": ["Prompt"]
 }

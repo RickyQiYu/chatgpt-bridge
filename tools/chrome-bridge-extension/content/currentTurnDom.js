@@ -98,12 +98,16 @@
 
     function getFinalAssistantNode(root, isCredibleAssistantNode) {
       if (!root) return null;
-      if (isCredibleAssistantNode(root)) return root;
+      if ((isCurrentAssistantMessage(root) || root.matches?.('[data-message-author-role="assistant"], [data-turn="assistant"]'))
+        && isCredibleAssistantNode(root)) return root;
       const legacy = Array.from(root.querySelectorAll?.('[data-message-author-role="assistant"]') || []).find(isCredibleAssistantNode);
       if (legacy) return legacy;
       const nativeMessage = Array.from(root.querySelectorAll?.(ASSISTANT_SEARCH_MESSAGE_SELECTOR) || [])
         .find((node) => isCurrentAssistantMessage(node) && isCredibleAssistantNode(node));
       if (nativeMessage) return nativeMessage;
+      // The enclosing marker branch remains the artifact/progress scope, but
+      // its native final message owns answer text and excludes sibling thought.
+      if (isCredibleAssistantNode(root)) return root;
       for (const marker of Array.from(root.querySelectorAll?.(ASSISTANT_TURN_START_SELECTOR) || []).reverse()) {
         const assistant = currentAssistantNode(marker);
         if (assistant && isCredibleAssistantNode(assistant)) return assistant;

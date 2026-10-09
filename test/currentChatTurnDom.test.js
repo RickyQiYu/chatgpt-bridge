@@ -24,7 +24,7 @@ test('native answer discovery preserves sibling artifacts within its owned assis
   const parser = await createAssistantFixtureParser();
   const html = await fs.readFile(new URL('./fixtures/chat-dom/captured/shared-turn-boundary/02-native-answer-artifact.html', import.meta.url), 'utf8');
   const result = parser.parseRequestWithoutAssistant(html, { submittedUserTurnKey: 'turn-current::user' });
-  assert.equal(result.answer, 'Answer text\n\n[Download result.zip](sandbox:/mnt/data/result.zip)');
+  assert.equal(result.answer, 'Answer text');
   assert.equal(result.artifacts.length, 1);
   assert.equal(result.artifacts[0].name, 'result.zip');
   assert.equal(result.artifacts[0].phase, 'READY');
@@ -44,6 +44,15 @@ test('native answer ownership retains generating artifacts and excludes user and
   assert.equal(result.artifacts[0].phase, 'GENERATING');
   assert.ok(!result.answer.includes('Later answer'));
   assert.ok(!result.raw.includes('User attachment'));
+});
+
+test('native final answer excludes sibling reasoning while its branch remains the progress scope', async () => {
+  const parser = await createAssistantFixtureParser();
+  const html = await fs.readFile(new URL('./fixtures/chat-dom/captured/shared-turn-boundary/03-native-final-reasoning.html', import.meta.url), 'utf8');
+  const result = parser.parseRequestWithoutAssistant(html, { submittedUserTurnKey: 'turn-current::user' });
+  assert.equal(result.answer, 'Actual final answer.');
+  assert.ok(result.progressItems.some((item) => item.text.includes('Visible reasoning status.')));
+  assert.ok(!result.progressItems.some((item) => item.text === 'Prompt'));
 });
 
 test('an optimistic ChatGPT turn cannot become a submitted user anchor before native identity arrives', async () => {
