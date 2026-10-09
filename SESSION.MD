@@ -2,22 +2,22 @@
 
 ## Current source candidates (not deployed)
 
-- Bridge package: 6.4.14.
-- Extension manifest: 2.4.17.
-- Content runtime: 4.4.17.
+- Bridge package: 6.4.15.
+- Extension manifest: 2.4.18.
+- Content runtime: 4.4.18.
 - Extension protocol: 5 only.
 - Background persistence schema: 6 only.
 - Workflow runtime schema: 3 only.
 
-The checked-in candidate adds typed, exact pre-dispatch results for lease recovery rejections. It carries bounded reason codes and full request/lease/server/epoch identity to Bridge; it settles only the command wait and never clears the background lease.
+The candidate adds typed, exact pre-dispatch results for lease recovery rejections and classifies a persisted request command as non-physical only when its contract says `operation: read` and `reconcilePolicy: effect_evidence`. It carries bounded reason codes and exact request/lease/server/epoch identity to Bridge. This classification does not clear a lease: active write commands, physical effects, and downloads still block, and the Bridge stale-release path still requires exact identity, canonical terminal state, no active server request, and a fresh idle observation.
 
-The live canary remains Bridge 6.4.13 with extension 2.4.16/content 4.4.16. The newer bundle has not been installed or reloaded because the Mac UI is currently locked. Do not restart the canary to 6.4.14 until extension 2.4.17 is active.
+The live canary remains Bridge 6.4.13 with extension 2.4.16/content 4.4.16. Chrome is accessible and the two canonical Planner tabs are open; the candidate bundle has not yet been installed or reloaded. Do not restart the canary to 6.4.15 until extension 2.4.18 is active.
 
-Natural wakes 156/178 completed in their canonical sessions with valid checkpoints and ambiguous_send=false. The due pair 157/179 failed closed: the extension reports BROWSER_TAB_LEASED with reason lease_children_active. Both turns are final and composers are empty, but the extension background still records active lease children. Bridge currently has two pending release commands, zero active requests, and zero pending requests. Do not clear storage, cancel children, or bypass the lease_children_active gate before reading the exact extension child ledger.
+Natural wakes 156/178 completed in their canonical sessions with valid checkpoints and ambiguous_send=false. The due pair 157/179 failed closed: the extension reports BROWSER_TAB_LEASED with reason lease_children_active. Both canonical Bridge requests are terminal `completed`, their generations are stopped, and both composers show Voice with no draft. The server reports zero active requests and zero pending requests. Each exact tab ledger contains one dispatched `request.effect.reconcile` command explicitly typed as `operation: read` and `reconcilePolicy: effect_evidence`, with no active physical effect or download record. The new candidate removes only that typed evidence command from the physical-child set; do not clear storage or release through a different path.
 
-The latest source changes distinguish a typed pre-dispatch child-gate rejection from an ambiguous release. Full npm test passes (1,446 passed, 2 skipped); npm run check passes for 612 JavaScript files and package contents; npm run check:quality exits 0 with 11 below-hard-limit warnings; git diff --check passes. PR #14 remains open; its currently deployed canary does not include this follow-up.
+The latest source changes distinguish a typed pre-dispatch child-gate rejection from an ambiguous release and keep evidence-only commands separate from physical children. The new regression first failed with `lease_children_active`; it and the focused fault/compatibility suites now pass. Full `npm test` passes (1,448 passed, 2 skipped); `npm run check` passes for 612 JavaScript files and package contents; `npm run check:quality` exits 0 with 11 below-hard-limit warnings; `git diff --check` passes. PR #14 remains open; its live canary does not yet include this candidate.
 
-Codex dispatch configuration permits Governance and Voice Terminal, the worker source is at accepted Governance main 93b24ab2, and GitHub CLI authenticated calls succeed. The canonical normal dispatch queue is empty. The host worker doctor is ready and its 30-second LaunchAgent continues polling; #633 remains ambiguous/non-retryable and #637 remains invalid because its body digest differs from its seal and it lacks a valid approval. No host/device operation is authorized by this task.
+Codex dispatch configuration permits Governance and Voice Terminal, the worker source is at accepted Governance main 93b24ab2, and GitHub CLI authenticated calls succeed. The canonical normal dispatch queue is empty. The host worker doctor is ready and its 30-second LaunchAgent continues polling; #633 remains ambiguous/non-retryable and #637 remains invalid because its body digest differs from its seal and it lacks a valid approval. No ADB/device/Gateway/HIL execution is in scope.
 ## Historical session notes
 
 The versioned entries below record earlier source changes and verification results; they do not describe the current live installation.

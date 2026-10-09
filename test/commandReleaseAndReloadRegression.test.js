@@ -719,6 +719,89 @@ test('lease.release_recover refuses active request commands, effects, and downlo
   }
 });
 
+test('lease release recovery ignores a typed read-only effect evidence command', async () => {
+  const request = { requestId: 'request-read-reconcile', leaseId: 'lease-read-reconcile', ownerServerInstanceId: 'server-regression', responseEpoch: 0 };
+  const h = backgroundHarness(104);
+  try {
+    await initializeHarness(h);
+    await h.backgroundState.transition(h.state.tabId, { type: 'lease.claim', ...request, contentEpoch: h.state.contentEpoch });
+    const commandId = 'read-effect-reconcile';
+    const registered = await h.backgroundState.transition(h.state.tabId, {
+      type: 'command.registered', ...request, scope: 'request', commandId,
+      commandType: 'request.effect.reconcile', mode: 'result', operation: 'read',
+      retryPolicy: 'always', reconcilePolicy: 'effect_evidence', contentEpoch: h.state.contentEpoch,
+    });
+    assert.equal(registered.accepted, true, registered.reason);
+    const acceptedEnvelope = h.createEnvelopeDraft(h.state, ExtensionMessageType.COMMAND_ACCEPTED, {
+      commandId, commandType: 'request.effect.reconcile', requestId: request.requestId,
+      commandScope: 'request', commandMode: 'result',
+    }, { commandId, causationId: `message-${commandId}`, lease: request });
+    const dispatched = await h.backgroundState.transition(h.state.tabId, {
+      type: 'command.dispatched', commandId, acceptedEnvelope, ...request, contentEpoch: h.state.contentEpoch,
+    });
+    assert.equal(dispatched.accepted, true, dispatched.reason);
+
+    const recovered = await h.backgroundState.transition(h.state.tabId, releaseRecoveryEvent(h, request, 'release-after-read-command'));
+    assert.equal(recovered.accepted, true, recovered.reason);
+    assert.equal(recovered.state.lease.status, 'releasing');
+    const released = await h.backgroundState.transition(h.state.tabId, {
+      type: 'lease.release', ...request, contentEpoch: h.state.contentEpoch,
+    });
+    assert.equal(released.accepted, true, released.reason);
+    assert.equal(released.state.lease, null);
+    assert.equal(released.state.commands[commandId].status, 'dispatched');
+    assert.deepEqual(released.state.effects, {});
+    assert.deepEqual(released.state.downloads, {});
+  } finally { h.restore(); }
+});
+
+test('lease release recovery requires exact read evidence metadata', async () => {
+  const invalidContracts = [
+    {
+      tabId: 105, requestId: 'request-wrong-reconcile-policy', leaseId: 'lease-wrong-reconcile-policy',
+      commandId: 'wrong-reconcile-policy', operation: 'read', reconcilePolicy: 'request_projection',
+    },
+    {
+      tabId: 106, requestId: 'request-missing-operation', leaseId: 'lease-missing-operation',
+      commandId: 'missing-operation', reconcilePolicy: 'effect_evidence',
+    },
+  ];
+
+  for (const contract of invalidContracts) {
+    const request = {
+      requestId: contract.requestId, leaseId: contract.leaseId,
+      ownerServerInstanceId: 'server-regression', responseEpoch: 0,
+    };
+    const h = backgroundHarness(contract.tabId);
+    try {
+      await initializeHarness(h);
+      await h.backgroundState.transition(h.state.tabId, { type: 'lease.claim', ...request, contentEpoch: h.state.contentEpoch });
+      const registration = {
+        type: 'command.registered', ...request, scope: 'request', commandId: contract.commandId,
+        commandType: 'request.effect.reconcile', mode: 'result', retryPolicy: 'always',
+        reconcilePolicy: contract.reconcilePolicy, contentEpoch: h.state.contentEpoch,
+      };
+      if (contract.operation) registration.operation = contract.operation;
+      const registered = await h.backgroundState.transition(h.state.tabId, registration);
+      assert.equal(registered.accepted, true, registered.reason);
+      const acceptedEnvelope = h.createEnvelopeDraft(h.state, ExtensionMessageType.COMMAND_ACCEPTED, {
+        commandId: contract.commandId, commandType: 'request.effect.reconcile', requestId: request.requestId,
+        commandScope: 'request', commandMode: 'result',
+      }, { commandId: contract.commandId, causationId: `message-${contract.commandId}`, lease: request });
+      const dispatched = await h.backgroundState.transition(h.state.tabId, {
+        type: 'command.dispatched', commandId: contract.commandId, acceptedEnvelope, ...request, contentEpoch: h.state.contentEpoch,
+      });
+      assert.equal(dispatched.accepted, true, dispatched.reason);
+
+      const recovered = await h.backgroundState.transition(h.state.tabId, releaseRecoveryEvent(h, request, `release-${contract.commandId}`));
+      assert.equal(recovered.accepted, false);
+      assert.equal(recovered.reason, 'lease_children_active');
+      assert.equal(recovered.state.lease.status, 'claimed');
+      assert.equal(recovered.state.lease.releaseRecoveryUsed, undefined);
+    } finally { h.restore(); }
+  }
+});
+
 test('stale request.release reports a pre-dispatch child gate without changing the persisted lease', async () => {
   const h = backgroundHarness(103);
   const request = { requestId: 'request-stale-release-active-child', leaseId: 'lease-stale-release-active-child', ownerServerInstanceId: 'server-regression', responseEpoch: 0 };
