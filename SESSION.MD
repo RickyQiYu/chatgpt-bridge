@@ -1,6 +1,6 @@
 # Current Session Handoff
 
-## Current source candidates (not deployed)
+## Current source and local canary — 2026-10-09
 
 - Bridge package: 6.4.15.
 - Extension manifest: 2.4.18.
@@ -11,13 +11,21 @@
 
 The candidate adds typed, exact pre-dispatch results for lease recovery rejections and classifies a persisted request command as non-physical only when its contract says `operation: read` and `reconcilePolicy: effect_evidence`. It carries bounded reason codes and exact request/lease/server/epoch identity to Bridge. This classification does not clear a lease: active write commands, physical effects, and downloads still block, and the Bridge stale-release path still requires exact identity, canonical terminal state, no active server request, and a fresh idle observation.
 
-The live canary remains Bridge 6.4.13 with extension 2.4.16/content 4.4.16. Chrome is accessible and the two canonical Planner tabs are open; the candidate bundle has not yet been installed or reloaded. Do not restart the canary to 6.4.15 until extension 2.4.18 is active.
+The stable unpacked-extension directory matched 2.4.18; Chrome reloaded it, both canonical Planner tabs were refreshed to content 4.4.18, and the Bridge LaunchAgent restarted on 6.4.15. Both clients report ready/compatible, with Voice composer, no draft, no active request, and no pending Bridge command. The source remains an unmerged local canary; PR #14 is still OPEN.
 
-Natural wakes 156/178 completed in their canonical sessions with valid checkpoints and ambiguous_send=false. The due pair 157/179 failed closed: the extension reports BROWSER_TAB_LEASED with reason lease_children_active. Both canonical Bridge requests are terminal `completed`, their generations are stopped, and both composers show Voice with no draft. The server reports zero active requests and zero pending requests. Each exact tab ledger contains one dispatched `request.effect.reconcile` command explicitly typed as `operation: read` and `reconcilePolicy: effect_evidence`, with no active physical effect or download record. The new candidate removes only that typed evidence command from the physical-child set; do not clear storage or release through a different path.
+Natural wakes 156/178 completed in their canonical sessions with valid checkpoints and ambiguous_send=false. After deployment, the host naturally recorded `sent` for Governance 157 and Voice Terminal 179 on successive polls; both canonical Bridge turns completed. The registry advanced to 157/179 and diagnostics returned zero active requests and zero pending requests/commands. However, neither latest Planner reply included a complete `planner-runtime-checkpoint-v1` footer; local checkpoint files remain at 156/178. Delivery is verified, but continuity and the new checkpoint `ambiguous_send` values are not. Validate the next natural cadence before claiming the Planner checkpoint path is healthy.
 
-The latest source changes distinguish a typed pre-dispatch child-gate rejection from an ambiguous release and keep evidence-only commands separate from physical children. The new regression first failed with `lease_children_active`; it and the focused fault/compatibility suites now pass. Full `npm test` passes (1,448 passed, 2 skipped); `npm run check` passes for 612 JavaScript files and package contents; `npm run check:quality` exits 0 with 11 below-hard-limit warnings; `git diff --check` passes. PR #14 remains open; its live canary does not yet include this candidate.
+The exact pre-fix tab ledgers contained one dispatched `request.effect.reconcile` command per lease, explicitly persisted as `operation: read` plus `reconcilePolicy: effect_evidence`, with no active physical effect or download. The 6.4.15/2.4.18 candidate excludes only that typed read-only evidence command from the physical-child gate; active writes, other commands, effects, and downloads still block. Do not clear extension storage or release through another path.
+
+The latest source changes distinguish a typed pre-dispatch child-gate rejection from an ambiguous release and keep evidence-only commands separate from physical children. The new regression first failed with `lease_children_active`; the focused release/fault/compatibility suites pass (49/49). Full `npm test` passes (1,448 passed, 2 skipped); `npm run check` passes for 612 JavaScript files and package contents; `npm run check:quality` exits 0 with 11 below-hard-limit warnings; `git diff --check` passes. PR #14 is OPEN at head c56bddc; the same tested head is deployed locally and has not been merged.
 
 Codex dispatch configuration permits Governance and Voice Terminal, the worker source is at accepted Governance main 93b24ab2, and GitHub CLI authenticated calls succeed. The canonical normal dispatch queue is empty. The host worker doctor is ready and its 30-second LaunchAgent continues polling; #633 remains ambiguous/non-retryable and #637 remains invalid because its body digest differs from its seal and it lacks a valid approval. No ADB/device/Gateway/HIL execution is in scope.
+
+## Exact next actions
+
+1. At the next natural 20-minute wake pair, verify complete checkpoint footers for both projects. The 157/179 turns were delivered and completed but did not advance the cached checkpoints.
+2. Re-read the canonical dispatch queue after those Planner responses. The Codex worker is healthy but has no open Issue to consume now; do not fabricate one.
+3. Keep #633 non-retryable and #637 blocked until a new sealed request and protocol-required direct-human authority exist.
 ## Historical session notes
 
 The versioned entries below record earlier source changes and verification results; they do not describe the current live installation.

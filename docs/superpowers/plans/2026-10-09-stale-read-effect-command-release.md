@@ -120,7 +120,7 @@ Set Bridge to `6.4.15`, extension to `2.4.18`, and content runtime to `4.4.18`; 
 
 - [x] **Step 2: Update durable source and handoff documentation**
 
-Document that only a command explicitly persisted as `read` plus `effect_evidence` is non-physical for stale release. Keep the canonical terminal-state, fresh idle observation, exact identity, active-effect, active-download, and all-other-command gates unchanged. Record this as an undeployed source candidate until live activation is verified.
+Document that only a command explicitly persisted as `read` plus `effect_evidence` is non-physical for stale release. Keep the canonical terminal-state, fresh idle observation, exact identity, active-effect, active-download, and all-other-command gates unchanged. Record the source as an undeployed candidate until activation is verified, then update the current session handoff with exact live rollout evidence.
 
 - [x] **Step 3: Run release validation**
 
@@ -138,9 +138,10 @@ Expected: all focused and full tests pass; package/syntax checks pass; quality e
 
 ### Task 4: Deliver the source candidate and verify the local wake path
 
-- [ ] Review the final diff for unrelated changes and sensitive data.
-- [ ] Commit the candidate on this isolated branch.
-- [ ] Fast-forward the existing `fix/stale-lease-release-command-reconciliation-20261006` branch from the `runtime-main` worktree to this tested head and push that branch, updating PR #14 without merging it.
-- [ ] Install/reload the exact compatible extension bundle in Chrome and verify both canonical clients reconnect with the expected versions.
-- [ ] Observe a natural due wake pair; confirm both issue sequences advance only after their matching `prompt.sent` and checkpoint readbacks, with `ambiguous_send: false`.
-- [ ] Do not merge the PR or alter host-execution Issues #633/#637.
+- [x] Review the final diff for unrelated changes and sensitive data.
+- [x] Commit the candidate on this isolated branch.
+- [x] Fast-forward the existing `fix/stale-lease-release-command-reconciliation-20261006` branch from the `runtime-main` worktree to this tested head and push that branch, updating PR #14 without merging it.
+- [x] Install/verify the stable extension bundle in Chrome, reload it, refresh both canonical tabs, and restart the Bridge canary; both clients report compatible versions.
+- [x] Observe natural due wake delivery for Governance 157 and Voice Terminal 179; Bridge confirms both corresponding turns completed.
+- [ ] Verify complete checkpoint footer readbacks and `ambiguous_send` values at the next natural cadence. The 157/179 responses did not produce complete footers, so cached checkpoint sequences remain 156/178.
+- [x] Do not merge the PR or alter host-execution Issues #633/#637.
