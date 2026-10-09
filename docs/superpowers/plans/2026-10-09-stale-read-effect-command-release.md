@@ -143,5 +143,6 @@ Expected: all focused and full tests pass; package/syntax checks pass; quality e
 - [x] Fast-forward the existing `fix/stale-lease-release-command-reconciliation-20261006` branch from the `runtime-main` worktree to this tested head and push that branch, updating PR #14 without merging it.
 - [x] Install/verify the stable extension bundle in Chrome, reload it, refresh both canonical tabs, and restart the Bridge canary; both clients report compatible versions.
 - [x] Observe natural due wake delivery for Governance 157 and Voice Terminal 179; Bridge confirms both corresponding turns completed.
-- [ ] Verify complete checkpoint footer readbacks and `ambiguous_send` values at the next natural cadence. The 157/179 responses did not produce complete footers, so cached checkpoint sequences remain 156/178.
+- [ ] Resolve active requests 158/180 from exact turn/effect evidence. Both are submitted with `submitted_user_turn_not_found`, zero answer length, and no assistant turn key; do not replay, cancel, or clear them. Inspect the DOM turn boundary read-only after the Mac UI is accessible.
+- [ ] After 158/180 have protocol-defined terminal outcomes, verify complete checkpoint footer readbacks and `ambiguous_send` values on the next natural cadence. The 157/179 replies did not produce complete footers, so cached checkpoint sequences remain 156/178.
 - [x] Do not merge the PR or alter host-execution Issues #633/#637.
