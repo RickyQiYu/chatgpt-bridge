@@ -142,3 +142,25 @@ test('equal text in distinct anonymous turns remains two ordered recovery candid
   assert.equal(snapshots.length, 2);
   assert.deepEqual(Array.from(snapshots, (snapshot) => snapshot.candidateIndex), [1, 2]);
 });
+
+test('terminal snapshot preserves exact trailing checkpoint end marker outside markdown wrapper', async () => {
+  const parser = await createAssistantFixtureParser();
+  const start = '[planner-runtime-checkpoint-v1]';
+  const end = '[/planner-runtime-checkpoint-v1]';
+  const payload = '{"active_frontier":[],"ambiguous_send":false,"binding_epoch":4,"continuity":"valid","outstanding":[],"project_id":"RickyQiYu--project-governance","repository":"RickyQiYu/project-governance","schema":"project-governance/planner-runtime-checkpoint-v1","source_identity":"abcdef0123456789","wake_sequence":169}';
+  const complete = `<div class="markdown"><p>Diagnostic completed.</p><p>${start}</p><p>${payload}</p></div><p>${end}</p>`;
+  parser.mount(`<main>${user('checkpoint-wake')}${assistant('checkpoint-answer', complete)}</main>`);
+
+  const snapshot = parser.snapshots.readAssistantSnapshot({ submittedUserTurnKey: 'checkpoint-wake' });
+  assert.equal(snapshot.turnKey, 'checkpoint-answer');
+  assert.equal(snapshot.answer.split(start).length - 1, 1);
+  assert.equal(snapshot.answer.split(end).length - 1, 1);
+  assert.ok(snapshot.answer.trimEnd().endsWith(end), 'the final closing marker must not be dropped');
+  assert.ok(snapshot.answer.indexOf(start) < snapshot.answer.indexOf(end), 'the markers keep document order');
+  assert.ok(snapshot.responseBlocks.some((block) => String(block.markdown || block.text || '').includes(end)));
+
+  parser.mount(`<main>${user('checkpoint-wake')}${assistant('checkpoint-answer', complete.replace(`<p>${end}</p>`, ''))}</main>`);
+  const incomplete = parser.snapshots.readAssistantSnapshot({ submittedUserTurnKey: 'checkpoint-wake' });
+  assert.equal(incomplete.answer.split(start).length - 1, 1);
+  assert.equal(incomplete.answer.includes(end), false, 'the extractor must not invent a missing marker');
+});
