@@ -17,6 +17,7 @@ export function isCommandResponsePayload(payload = {}) {
   return type === 'command.result'
     || type === 'command.rejected'
     || type === 'command.error'
+    || type === 'tab.observation.refreshed'
     || type === 'lease.released'
     || type === 'lease.quarantined';
 }

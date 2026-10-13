@@ -154,7 +154,12 @@ test('stale Voice-idle extension observation refreshes before prompt admission',
         observedAt: Date.now(),
       };
       hub.emit('client.activity', { clientId: client.id, client });
-      return { observedAt: client.tabObservation.observedAt, revision: client.tabObservation.revision };
+      return {
+        type: 'tab.observation.refreshed',
+        sourceClientId: client.id,
+        observedAt: client.tabObservation.observedAt,
+        revision: client.tabObservation.revision,
+      };
     },
   });
 

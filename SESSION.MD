@@ -1,5 +1,11 @@
 # Current Session Handoff
 
+## Planner recovery HTTP adapters — 2026-10-13
+
+Task `20261013T143300Z-chatgpt-bridge-planner-recovery-command-http-adapter-002` adds two source-bound public HTTP adapters: `POST /browser/tabs/observation/refresh` and `POST /requests/cancel`. The former correlates `tab.observation.refreshed`, uses the existing exact-client admission path, and requires a newer fresh observation; the latter checks canonical request ownership and reports success only after the canonical `prompt.cancel` effect is confirmed. Both use bounded projections/static typed errors; no generic command surface or global-stop fallback was added. `POST /browser/tabs/reload` is unchanged. Contract details are in `docs/user/API.md`.
+
+The focused refresh/cancel, command, request, admission, and extension-response suites pass (52 tests). The full suite ran 1,480 tests: 1,413 passed, while 65 failed on sandbox-denied loopback/out-of-workspace filesystem access or unavailable local Workflow daemon startup; the API blackbox regression is among the loopback-blocked tests. `npm run check` passed with npm cache/logs redirected into `/tmp`; `npm run check:quality` passed with existing line-count warnings. No live browser, extension or Planner operation was performed. Re-run full HTTP/live and package checks in a permissive release environment; local source is committed detached and remote delivery remains worker-owned.
+
 ## Current source and local canary — 2026-10-09
 
 - Bridge package: 6.4.16.

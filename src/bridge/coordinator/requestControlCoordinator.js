@@ -2,7 +2,7 @@ import { abortError, makeEvent } from '../requestState.js';
 import { RequestEventType } from '../state/requestEvents.js';
 import { createRequestEffectDescriptor, requestTextHash } from '../requestExecutionPlan.js';
 import { waitForSteerReadiness } from './steerReadiness.js';
-import { isRequestRuntimeFinished } from './requestRuntimeProjection.js';
+import { isCancellationRequested, isRequestRuntimeFinished } from './requestRuntimeProjection.js';
 
 /**
  * Coordinates explicit controls for one already-canonical request.
@@ -48,6 +48,36 @@ export class RequestControlCoordinator {
     } finally {
       this.#steers.delete(id);
     }
+  }
+
+  async cancelTrackedRequest(requestId, options = {}) {
+    const id = String(requestId || '').trim();
+    if (!id) throw requestControlError('REQUEST_ID_REQUIRED', 'requestId is required');
+    const canonical = this.lifecycle.getState(id);
+    const state = this.pending.get(id);
+    if (!state && canonical?.terminal) {
+      throw requestControlError('REQUEST_TERMINAL', 'The requested Bridge request is already terminal');
+    }
+    if (!state) throw requestControlError('REQUEST_NOT_FOUND', 'The requested Bridge request was not found');
+    if (isRequestRuntimeFinished(state) || canonical?.terminal) {
+      throw requestControlError('REQUEST_TERMINAL', 'The requested Bridge request is already terminal');
+    }
+
+    const sourceClientId = String(options.sourceClientId || '').trim();
+    if (!sourceClientId) throw requestControlError('SOURCE_CLIENT_ID_REQUIRED', 'sourceClientId is required');
+    if (!state.clientId || sourceClientId !== state.clientId) {
+      throw requestControlError('REQUEST_SOURCE_MISMATCH', 'The request is not owned by the supplied source client');
+    }
+    if (isCancellationRequested(state)) {
+      throw requestControlError('REQUEST_CANCELLATION_IN_PROGRESS', 'Cancellation is already in progress for this request');
+    }
+
+    const outcome = await this.lifecycle.cancelState(state, 'Cancelled through request-scoped API');
+    const terminal = this.lifecycle.getState(id)?.terminal;
+    if (outcome?.confirmed !== true || terminal?.code !== 'cancelled') {
+      throw requestControlError('REQUEST_CANCEL_UNCONFIRMED', 'Request cancellation could not be confirmed');
+    }
+    return { requestId: id, sourceClientId, cancelled: true };
   }
 
   #assertSteerActive(state, sourceClientId) {
@@ -169,4 +199,10 @@ export class RequestControlCoordinator {
       request: this.lifecycle.requestIdentity(state),
     });
   }
+}
+
+function requestControlError(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
 }

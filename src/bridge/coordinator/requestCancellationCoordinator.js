@@ -15,7 +15,14 @@ export class RequestCancellationCoordinator {
 
   cancel(state, reason = 'Cancelled') {
     const owner = this.owner;
-    if (!state || isRequestRuntimeFinished(state) || isCancellationRequested(state)) return;
+    if (!state || isRequestRuntimeFinished(state) || isCancellationRequested(state)) {
+      return {
+        confirmed: false,
+        code: !state ? 'REQUEST_NOT_FOUND'
+          : isRequestRuntimeFinished(state) ? 'REQUEST_TERMINAL'
+            : 'REQUEST_CANCELLATION_IN_PROGRESS',
+      };
+    }
     markCancellationRequested(state);
     state.cancelReason = String(reason || 'Cancelled');
 
@@ -23,7 +30,7 @@ export class RequestCancellationCoordinator {
       owner.ingestRequestTransition(state, owner.canonicalEvent(state, RequestEventType.CANCELLED, {
         message: reason,
       }, 'bridge_cancellation_without_source'));
-      return;
+      return { confirmed: false, code: 'REQUEST_SOURCE_CLIENT_REQUIRED' };
     }
 
     const request = owner.requestIdentity(state);
@@ -38,7 +45,7 @@ export class RequestCancellationCoordinator {
       },
     });
 
-    void owner.sendCommand('prompt.cancel', {
+    return Promise.resolve().then(() => owner.sendCommand('prompt.cancel', {
       requestId: state.requestId,
       reason,
       effect,
@@ -46,6 +53,14 @@ export class RequestCancellationCoordinator {
       sourceClientId: state.clientId,
       timeoutMs: 10_000,
       request,
+    })).then((result) => {
+      if (result?.type !== 'prompt.cancel'
+        || result?.effectType !== 'prompt.cancel'
+        || String(result.effectId || '') !== effect.effectId
+        || String(result.sourceClientId || '') !== String(state.clientId || '')) {
+        return { confirmed: false, code: 'REQUEST_CANCEL_UNCONFIRMED' };
+      }
+      return { confirmed: true, effectId: effect.effectId };
     }).catch((error) => {
       owner.eventBus?.emitDebug({
         type: 'request.cancel.command_failed',
@@ -63,6 +78,7 @@ export class RequestCancellationCoordinator {
           recoverable: true,
         }, 'bridge_cancellation_delivery'));
       }
+      return { confirmed: false, code: 'REQUEST_CANCEL_UNCONFIRMED' };
     });
   }
 }

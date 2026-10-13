@@ -71,18 +71,65 @@ export class TabObservationAdmission {
       return client;
     }
 
-    const previousObservedAt = Number(observation.observedAt) || 0;
-    await this.sendCommand('tab.observation.refresh', { reason: 'prompt_admission' }, {
-      sourceClientId: clientId,
-      timeoutMs: 5_000,
-    });
-    const refreshed = Array.from(this.hub.clients || []).find((candidate) => candidate.id === clientId) || client;
-    const refreshedAt = Number(refreshed.tabObservation?.observedAt) || 0;
-    if (!this.hasFreshTabObservation(refreshed) || refreshedAt <= previousObservedAt) {
-      const error = new Error(`No fresh tab observation was read back for ${clientId}`);
-      error.code = 'TAB_OBSERVATION_REFRESH_FAILED';
+    try {
+      await this.refreshTabObservation(client, { reason: 'prompt_admission' });
+    } catch (error) {
+      if (error?.code === 'TAB_OBSERVATION_REFRESH_NOT_FRESH') error.code = 'TAB_OBSERVATION_REFRESH_FAILED';
       throw error;
     }
-    return refreshed;
+    return Array.from(this.hub.clients || []).find((candidate) => candidate.id === clientId) || client;
   }
+
+  async refreshTabObservation(client = {}, options = {}) {
+    const clientId = String(client.id || '').trim();
+    if (!clientId) throw tabObservationError('TAB_OBSERVATION_SOURCE_REQUIRED', 'sourceClientId is required');
+    if (client.ready !== true || client.compatible === false
+      || client.compatibility?.compatible === false || client.quarantined) {
+      throw tabObservationError('TAB_OBSERVATION_CLIENT_UNAVAILABLE', 'The requested source client is unavailable');
+    }
+
+    const previousObservation = client.tabObservation || {};
+    const previousRevision = Number(previousObservation.revision) || 0;
+    const previousObservedAt = Number(previousObservation.observedAt) || 0;
+    let result;
+    try {
+      result = await this.sendCommand('tab.observation.refresh', {
+        reason: String(options.reason || 'recovery'),
+      }, {
+        sourceClientId: clientId,
+        timeoutMs: Math.max(1_000, Number(options.timeoutMs) || 5_000),
+      });
+    } catch {
+      throw tabObservationError('TAB_OBSERVATION_REFRESH_FAILED', 'Tab observation refresh could not be confirmed');
+    }
+
+    if (result?.type !== 'tab.observation.refreshed'
+      || String(result.sourceClientId || '') !== clientId) {
+      throw tabObservationError('TAB_OBSERVATION_REFRESH_FAILED', 'Tab observation refresh could not be confirmed');
+    }
+
+    const refreshed = Array.from(this.hub.clients || []).find((candidate) => candidate?.id === clientId);
+    if (!refreshed) throw tabObservationError('TAB_OBSERVATION_CLIENT_NOT_FOUND', 'The requested source client disconnected');
+    const observation = refreshed.tabObservation || {};
+    const revision = Number(observation.revision) || 0;
+    const observedAt = Number(observation.observedAt) || 0;
+    const resultRevision = Number(result.revision) || 0;
+    const resultObservedAt = Number(result.observedAt) || 0;
+    if (!this.hasFreshTabObservation(refreshed)
+      || revision <= previousRevision
+      || observedAt <= previousObservedAt
+      || resultRevision <= previousRevision
+      || resultObservedAt <= previousObservedAt
+      || revision < resultRevision
+      || observedAt < resultObservedAt) {
+      throw tabObservationError('TAB_OBSERVATION_REFRESH_NOT_FRESH', 'No newer fresh tab observation was confirmed');
+    }
+    return { sourceClientId: clientId, observation };
+  }
+}
+
+function tabObservationError(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
 }
