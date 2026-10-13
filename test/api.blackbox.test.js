@@ -33,6 +33,12 @@ class FakeBridge extends EventEmitter {
     this.sessionDeletionCalls = [];
     this.requests = [];
     this.staleReleaseCalls = [];
+    this.recoveryCalls = [];
+    this.globalCancelCalls = 0;
+    this.observationRefreshResult = null;
+    this.requestCancelResult = { cancelled: true };
+    this.requestCancelError = null;
+    this.observationRefreshError = null;
     this.staleReleaseOutcome = { status: 'confirmed', result: { prompt: 'private coordinator data' } };
   }
   health() { return { ok: true, transport: 'extension', clients: [], selectedClientId: '', needsSelection: false, pendingRequests: 1, pendingCommands: 0, activeClient: null, activeRequests: [{ requestId: 'active-health-request', accepted: true, done: false }], artifacts: this.artifacts.length }; }
@@ -40,7 +46,17 @@ class FakeBridge extends EventEmitter {
   debugEvents() { return []; }
   selectClient(id) { return { id }; }
   clearSelectedClient() {}
-  cancelActive() { return 0; }
+  cancelActive() { this.globalCancelCalls += 1; return 0; }
+  async refreshTabObservation(sourceClientId) {
+    this.recoveryCalls.push({ type: 'observation-refresh', sourceClientId });
+    if (this.observationRefreshError) throw this.observationRefreshError;
+    return this.observationRefreshResult || { sourceClientId, observation: {} };
+  }
+  async cancelTrackedRequest(requestId, options = {}) {
+    this.recoveryCalls.push({ type: 'request-cancel', requestId, sourceClientId: options.sourceClientId });
+    if (this.requestCancelError) throw this.requestCancelError;
+    return { requestId, sourceClientId: options.sourceClientId, ...this.requestCancelResult };
+  }
   async listSessions() { return [{ id: 'session_1', title: 'Test Session' }]; }
   async newSession() { return { id: 'session_new', title: 'New' }; }
   async selectSession(id) { return { id, title: id }; }
@@ -625,6 +641,111 @@ test('real-browser E2E control endpoints preserve source identity and require UR
         timeoutMs: 10_000,
       },
     });
+  } finally {
+    await fx.close();
+  }
+});
+
+test('planner recovery HTTP adapters require exact identities and return bounded results', async () => {
+  const fx = await startFixture();
+  try {
+    const privateObservation = {
+      revision: 12,
+      observedAt: Date.now(),
+      stableForMs: 900,
+      document: { pageReady: true, chatMainReady: true, title: 'private title' },
+      composer: { ready: true, primaryAction: 'stop', hasDraft: false, text: 'private prompt' },
+      generation: { state: 'active', streamingVisible: true, stopVisible: true },
+      blocker: { state: 'none', message: 'private blocker detail' },
+      turn: { key: 'private-turn', userKey: 'private-user', phase: 'streaming', userPrompt: 'private prompt' },
+      output: { answer: 'private assistant output', thinking: 'private reasoning' },
+      session: { id: 'private-session' },
+      activeRequest: { requestId: 'private-request', leaseId: 'private-lease', ownerServerInstanceId: 'private-server' },
+      launchToken: 'private-token',
+    };
+    fx.bridge.observationRefreshResult = {
+      sourceClientId: 'source-client-exact',
+      observation: privateObservation,
+      commandId: 'private-command',
+      requestId: 'private-request',
+    };
+
+    const missingRefreshSource = await fx.request('/browser/tabs/observation/refresh', {
+      method: 'POST', body: JSON.stringify({ clientId: 'not-an-alias' }),
+    });
+    assert.equal(missingRefreshSource.response.status, 400);
+    assert.equal(missingRefreshSource.body.code, 'SOURCE_CLIENT_ID_REQUIRED');
+
+    const refreshed = await fx.request('/browser/tabs/observation/refresh', {
+      method: 'POST', body: JSON.stringify({ sourceClientId: 'source-client-exact' }),
+    });
+    assert.equal(refreshed.response.status, 200);
+    assert.deepEqual(fx.bridge.recoveryCalls[0], { type: 'observation-refresh', sourceClientId: 'source-client-exact' });
+    assert.equal(refreshed.body.sourceClientId, 'source-client-exact');
+    assert.deepEqual(refreshed.body.observation, {
+      revision: 12,
+      observedAt: privateObservation.observedAt,
+      stableForMs: 900,
+      document: { pageReady: true, chatMainReady: true },
+      composer: { ready: true, primaryAction: 'stop', hasDraft: false },
+      generation: { state: 'active', streamingVisible: true, stopVisible: true },
+      blocker: { state: 'none' },
+      turn: { present: true, phase: 'streaming', userBoundaryPresent: true },
+      requestActive: true,
+    });
+
+    const missingCancelRequest = await fx.request('/requests/cancel', {
+      method: 'POST', body: JSON.stringify({ sourceClientId: 'source-client-exact' }),
+    });
+    assert.equal(missingCancelRequest.response.status, 400);
+    assert.equal(missingCancelRequest.body.code, 'REQUEST_ID_REQUIRED');
+
+    const missingCancelSource = await fx.request('/requests/cancel', {
+      method: 'POST', body: JSON.stringify({ requestId: 'request-exact' }),
+    });
+    assert.equal(missingCancelSource.response.status, 400);
+    assert.equal(missingCancelSource.body.code, 'SOURCE_CLIENT_ID_REQUIRED');
+
+    fx.bridge.requestCancelResult = {
+      cancelled: true,
+      answer: 'private assistant output',
+      prompt: 'private user prompt',
+      commandId: 'private-command',
+      leaseId: 'private-lease',
+    };
+    const cancelled = await fx.request('/requests/cancel', {
+      method: 'POST', body: JSON.stringify({ requestId: 'request-exact', sourceClientId: 'source-client-exact' }),
+    });
+    assert.equal(cancelled.response.status, 200);
+    assert.deepEqual(fx.bridge.recoveryCalls[1], {
+      type: 'request-cancel', requestId: 'request-exact', sourceClientId: 'source-client-exact',
+    });
+    assert.deepEqual(cancelled.body, {
+      ok: true, requestId: 'request-exact', sourceClientId: 'source-client-exact', cancelled: true,
+    });
+    assert.equal(fx.bridge.globalCancelCalls, 0);
+    assert.doesNotMatch(JSON.stringify(refreshed.body), /private|prompt|assistant|reasoning|lease|token|command/i);
+    assert.doesNotMatch(JSON.stringify(cancelled.body), /private|prompt|assistant|lease|command/i);
+
+    fx.bridge.requestCancelError = Object.assign(new Error('private assistant output and prompt detail'), {
+      code: 'REQUEST_CANCEL_UNCONFIRMED',
+    });
+    const uncertain = await fx.request('/requests/cancel', {
+      method: 'POST', body: JSON.stringify({ requestId: 'request-uncertain', sourceClientId: 'source-client-exact' }),
+    });
+    assert.equal(uncertain.response.status, 502);
+    assert.equal(uncertain.body.code, 'REQUEST_CANCEL_UNCONFIRMED');
+    assert.doesNotMatch(JSON.stringify(uncertain.body), /private|prompt|assistant output/i);
+
+    fx.bridge.observationRefreshError = Object.assign(new Error('private assistant output and prompt detail'), {
+      code: 'TAB_OBSERVATION_REFRESH_NOT_FRESH',
+    });
+    const stale = await fx.request('/browser/tabs/observation/refresh', {
+      method: 'POST', body: JSON.stringify({ sourceClientId: 'source-client-exact' }),
+    });
+    assert.equal(stale.response.status, 502);
+    assert.equal(stale.body.code, 'TAB_OBSERVATION_REFRESH_NOT_FRESH');
+    assert.doesNotMatch(JSON.stringify(stale.body), /private|prompt|assistant output/i);
   } finally {
     await fx.close();
   }

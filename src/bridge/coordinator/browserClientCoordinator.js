@@ -146,6 +146,22 @@ async confirmPromptClient(state, client, details = {}) {
   return client;
 }
 
+async refreshTabObservation(sourceClientId, options = {}) {
+  const clientId = String(sourceClientId || '').trim();
+  if (!clientId) {
+    const error = new Error('sourceClientId is required');
+    error.code = 'TAB_OBSERVATION_SOURCE_REQUIRED';
+    throw error;
+  }
+  const client = Array.from(this.hub.clients || []).find((candidate) => candidate?.id === clientId);
+  if (!client) {
+    const error = new Error('The requested source client is not connected');
+    error.code = 'TAB_OBSERVATION_CLIENT_NOT_FOUND';
+    throw error;
+  }
+  return await this.tabObservationAdmission.refreshTabObservation(client, options);
+}
+
 autoOpenPromptEnabled(chatOptions = {}, options = {}) {
   if (typeof options.autoOpenTab === 'boolean') return options.autoOpenTab;
   if (typeof chatOptions.autoOpenTab === 'boolean') return chatOptions.autoOpenTab;

@@ -48,6 +48,77 @@ You can also use `newSession`, `sessionId`, or `freshTab` directly on `POST /cha
 
 `freshTab` implies a new session and requires a dedicated new browser tab instead of falling back to an existing connected tab.
 
+## Exact browser recovery
+
+These recovery endpoints require the same API authentication as other routes.
+They accept only explicit Bridge identities; neither endpoint selects a client
+implicitly or exposes the extension command transport.
+
+Refresh one connected client's tab observation:
+
+```text
+POST /browser/tabs/observation/refresh
+Content-Type: application/json
+{"sourceClientId":"client-id"}
+```
+
+The call sends the typed observation-refresh command to that client and returns
+only after a fresh observation from the same client is confirmed. A successful
+response contains `ok`, `sourceClientId`, and an allowlisted `observation`:
+
+```json
+{
+  "ok": true,
+  "sourceClientId": "client-id",
+  "observation": {
+    "revision": 13,
+    "observedAt": 1791849600000,
+    "stableForMs": 800,
+    "document": {"pageReady": true, "chatMainReady": true},
+    "composer": {"ready": true, "primaryAction": "stop", "hasDraft": false},
+    "generation": {"state": "active", "streamingVisible": true, "stopVisible": true},
+    "blocker": {"state": "none"},
+    "turn": {"present": true, "phase": "streaming", "userBoundaryPresent": true},
+    "requestActive": true
+  }
+}
+```
+
+Refresh errors return `{ "detail": "...", "code": "..." }` with stable
+codes: `SOURCE_CLIENT_ID_REQUIRED` (400), `TAB_OBSERVATION_CLIENT_NOT_FOUND`
+(404), `TAB_OBSERVATION_CLIENT_UNAVAILABLE` (409),
+`TAB_OBSERVATION_REFRESH_FAILED` (502), or
+`TAB_OBSERVATION_REFRESH_NOT_FRESH` (502). Failure details are static and do
+not include page text or command internals.
+
+Cancel exactly one active tracked request on its owning client:
+
+```text
+POST /requests/cancel
+Content-Type: application/json
+{"requestId":"request-id","sourceClientId":"client-id"}
+```
+
+Success is returned only after Bridge confirms the request-scoped
+`prompt.cancel` effect and its canonical request state is cancelled:
+
+```json
+{"ok":true,"requestId":"request-id","sourceClientId":"client-id","cancelled":true}
+```
+
+Cancellation errors use `{ "detail": "...", "code": "..." }` and these
+stable codes: `REQUEST_ID_REQUIRED` and `SOURCE_CLIENT_ID_REQUIRED` (400),
+`REQUEST_NOT_FOUND` (404), `REQUEST_TERMINAL`,
+`REQUEST_SOURCE_MISMATCH`, `REQUEST_SOURCE_CLIENT_REQUIRED`, and
+`REQUEST_CANCELLATION_IN_PROGRESS` (409), or
+`REQUEST_CANCEL_UNCONFIRMED` (502). An unconfirmed or ambiguous result is
+never reported as successful cancellation. This endpoint never invokes global
+browser stop.
+
+`POST /browser/tabs/reload` remains the authoritative exact-client reload API;
+its existing `sourceClientId` (and legacy `clientId`) request fields and
+behavior are unchanged.
+
 ## Models and effort
 
 Bridge can best-effort apply a visible ChatGPT model and reasoning/effort option before prompt submission.

@@ -6,6 +6,13 @@ Keep browser automation deterministic and recoverable under changes in the live 
 
 The workflow v3 and Protocol 5 atomic-publication hard cut is implemented. Core composition roots and stateful coordinators now meet the enforced 500-line boundary. Current work is live release verification, captured-fixture expansion, and reviewed decomposition of large pure parser/UI/script modules only when a real owner boundary appears.
 
+## Planner recovery HTTP adapter outcome — 2026-10-13
+
+- Expose exact-client observation refresh and exact-request cancellation through purpose-built authenticated HTTP routes; retain canonical command/request reducers and immutable effect identity.
+- Require a newer exact-client observation after refresh and a confirmed canonical `prompt.cancel` result before returning success. Never fall back to a selected client or global stop.
+- Keep `/browser/tabs/reload` unchanged. Document bounded success projections and static typed errors in `docs/user/API.md`.
+- Task `20261013T143300Z-chatgpt-bridge-planner-recovery-command-http-adapter-002` passes 52 focused tests. Full-suite/package validation is partial because the sandbox denies loopback and out-of-workspace writes; see `SESSION.MD` for exact results.
+
 ## Reliability goals
 
 - Keep Protocol 5 and its shared manifest as the only extension contract; never restore payload-kind inference or Protocol 4 compatibility routing.

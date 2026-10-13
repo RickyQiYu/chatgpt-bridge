@@ -45,6 +45,80 @@ function bridgeTokenFromRequest(req) {
   return String(req.query?.token || req.body?.token || req.headers['x-bridge-token'] || '');
 }
 
+const RECOVERY_HTTP_ERRORS = Object.freeze({
+  REQUEST_ID_REQUIRED: Object.freeze({ statusCode: 400, detail: 'requestId is required' }),
+  SOURCE_CLIENT_ID_REQUIRED: Object.freeze({ statusCode: 400, detail: 'sourceClientId is required' }),
+  TAB_OBSERVATION_SOURCE_REQUIRED: Object.freeze({ statusCode: 400, detail: 'sourceClientId is required' }),
+  TAB_OBSERVATION_CLIENT_NOT_FOUND: Object.freeze({ statusCode: 404, detail: 'The requested source client is not connected' }),
+  TAB_OBSERVATION_CLIENT_UNAVAILABLE: Object.freeze({ statusCode: 409, detail: 'The requested source client is unavailable' }),
+  TAB_OBSERVATION_REFRESH_FAILED: Object.freeze({ statusCode: 502, detail: 'Tab observation refresh could not be confirmed' }),
+  TAB_OBSERVATION_REFRESH_NOT_FRESH: Object.freeze({ statusCode: 502, detail: 'No newer fresh tab observation was confirmed' }),
+  REQUEST_NOT_FOUND: Object.freeze({ statusCode: 404, detail: 'The requested Bridge request was not found' }),
+  REQUEST_TERMINAL: Object.freeze({ statusCode: 409, detail: 'The requested Bridge request is already terminal' }),
+  REQUEST_SOURCE_MISMATCH: Object.freeze({ statusCode: 409, detail: 'The request is not owned by the supplied source client' }),
+  REQUEST_SOURCE_CLIENT_REQUIRED: Object.freeze({ statusCode: 409, detail: 'The request has no cancellable source client' }),
+  REQUEST_CANCELLATION_IN_PROGRESS: Object.freeze({ statusCode: 409, detail: 'Cancellation is already in progress for this request' }),
+  REQUEST_CANCEL_UNCONFIRMED: Object.freeze({ statusCode: 502, detail: 'Request cancellation could not be confirmed' }),
+});
+
+function recoveryHttpError(error, fallbackCode) {
+  const requestedCode = String(error?.code || '');
+  const code = Object.hasOwn(RECOVERY_HTTP_ERRORS, requestedCode) ? requestedCode : fallbackCode;
+  const definition = RECOVERY_HTTP_ERRORS[code];
+  const safeError = new HttpError(definition.statusCode, definition.detail);
+  safeError.code = code;
+  return safeError;
+}
+
+function typedHttpError(statusCode, code, detail) {
+  const error = new HttpError(statusCode, detail);
+  error.code = code;
+  return error;
+}
+
+function boundedObservation(observation = {}) {
+  const allowed = {
+    primaryAction: new Set(['send', 'stop', 'voice', 'unknown']),
+    generation: new Set(['idle', 'active', 'stopped', 'unknown']),
+    blocker: new Set(['none', 'confirmation', 'continue', 'explicit_error', 'unknown', 'recovery']),
+    phase: new Set(['unknown', 'reasoning', 'streaming', 'final', 'error']),
+  };
+  const enumValue = (value, values) => values.has(String(value || '').toLowerCase())
+    ? String(value).toLowerCase()
+    : 'unknown';
+  const number = (value, maximum = Number.MAX_SAFE_INTEGER) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0 ? Math.min(Math.floor(parsed), maximum) : 0;
+  };
+  const turn = observation.turn || {};
+  return {
+    revision: number(observation.revision),
+    observedAt: number(observation.observedAt),
+    stableForMs: number(observation.stableForMs, 3_600_000),
+    document: {
+      pageReady: observation.document?.pageReady === true,
+      chatMainReady: observation.document?.chatMainReady === true,
+    },
+    composer: {
+      ready: observation.composer?.ready === true,
+      primaryAction: enumValue(observation.composer?.primaryAction, allowed.primaryAction),
+      hasDraft: observation.composer?.hasDraft === true,
+    },
+    generation: {
+      state: enumValue(observation.generation?.state, allowed.generation),
+      streamingVisible: observation.generation?.streamingVisible === true,
+      stopVisible: observation.generation?.stopVisible === true,
+    },
+    blocker: { state: enumValue(observation.blocker?.state, allowed.blocker) },
+    turn: {
+      present: Boolean(String(turn.key || '').trim()),
+      phase: enumValue(turn.phase, allowed.phase),
+      userBoundaryPresent: Boolean(String(turn.userKey || '').trim()),
+    },
+    requestActive: Boolean(String(observation.activeRequest?.requestId || '').trim()),
+  };
+}
+
 async function collectDirectoryEntries(rootDir, prefix = '') {
   const entries = [];
   const items = await fs.readdir(rootDir, { withFileTypes: true });
@@ -561,6 +635,26 @@ export function createRouter(bridge, fileStore, eventBus = null, turnManager = n
     } catch (err) { next(err); }
   });
 
+  router.post('/requests/cancel', async (req, res, next) => {
+    const requestId = String(req.body?.requestId || '').trim();
+    const sourceClientId = String(req.body?.sourceClientId || '').trim();
+    if (!requestId) {
+      next(typedHttpError(400, 'REQUEST_ID_REQUIRED', 'requestId is required'));
+      return;
+    }
+    if (!sourceClientId) {
+      next(typedHttpError(400, 'SOURCE_CLIENT_ID_REQUIRED', 'sourceClientId is required'));
+      return;
+    }
+    try {
+      const result = await bridge.cancelTrackedRequest(requestId, { sourceClientId });
+      if (result?.cancelled !== true || result.requestId !== requestId || result.sourceClientId !== sourceClientId) {
+        throw typedHttpError(502, 'REQUEST_CANCEL_UNCONFIRMED', 'Request cancellation could not be confirmed');
+      }
+      res.json({ ok: true, requestId, sourceClientId, cancelled: true });
+    } catch (err) { next(recoveryHttpError(err, 'REQUEST_CANCEL_UNCONFIRMED')); }
+  });
+
   router.get('/models', async (_req, res, next) => {
     try { res.json({ ok: true, ...(await bridge.listModels({ timeoutMs: 10_000 })) }); } catch (err) { next(err); }
   });
@@ -719,6 +813,25 @@ export function createRouter(bridge, fileStore, eventBus = null, turnManager = n
       });
       res.json({ ok: true, ...result });
     } catch (err) { next(err); }
+  });
+
+  router.post('/browser/tabs/observation/refresh', async (req, res, next) => {
+    const sourceClientId = String(req.body?.sourceClientId || '').trim();
+    if (!sourceClientId) {
+      next(typedHttpError(400, 'SOURCE_CLIENT_ID_REQUIRED', 'sourceClientId is required'));
+      return;
+    }
+    try {
+      const result = await bridge.refreshTabObservation(sourceClientId);
+      if (result?.sourceClientId !== sourceClientId || !result.observation) {
+        throw typedHttpError(502, 'TAB_OBSERVATION_REFRESH_FAILED', 'Tab observation refresh could not be confirmed');
+      }
+      res.json({
+        ok: true,
+        sourceClientId,
+        observation: boundedObservation(result.observation),
+      });
+    } catch (err) { next(recoveryHttpError(err, 'TAB_OBSERVATION_REFRESH_FAILED')); }
   });
 
   router.post('/browser/layout/capture', async (req, res, next) => {

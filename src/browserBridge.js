@@ -208,6 +208,10 @@ export class BrowserBridge {
     return await this.#browserClients.closeBrowserTab(options);
   }
 
+  async refreshTabObservation(sourceClientId, options = {}) {
+    return await this.#browserClients.refreshTabObservation(sourceClientId, options);
+  }
+
   async closeOwnedBrowserTab(options = {}) { return await this.#browserClients.closeOwnedBrowserTab(options); }
 
   async reloadExtension(options = {}) {
@@ -368,6 +372,10 @@ export class BrowserBridge {
     if (!state) return false;
     this.#lifecycle.cancelState(state, reason);
     return true;
+  }
+
+  async cancelTrackedRequest(requestId, options = {}) {
+    return await this.#controls.cancelTrackedRequest(requestId, options);
   }
 
 
