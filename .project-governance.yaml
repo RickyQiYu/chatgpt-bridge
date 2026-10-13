@@ -1,0 +1,15 @@
+schema: project-governance/project-manifest-v2
+project_id: chatgpt-bridge
+governance:
+  repo: RickyQiYu/project-governance
+  version: 0.39.3
+  ref: f8e891e9dcc37de9214356a7ef75eccfb73e60c8
+dispatch:
+  transport: issue_v2
+local_policy:
+  agents: AGENT.MD
+  baseline: CONTEXT.MD
+  handoff: SESSION.MD
+  implementation_plan: GOAL.MD
+  architecture: ARCHITECTURE.md
+exceptions: []
